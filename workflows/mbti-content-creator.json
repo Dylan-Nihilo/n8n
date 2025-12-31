@@ -1,0 +1,416 @@
+{
+  "name": "MBTI内容创作器",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1,3,5"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "周一三五9点执行",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/{{$env.NOTION_MATERIAL_DATABASE_ID}}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.NOTION_API_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"and\": [\n      {\n        \"property\": \"热度评分\",\n        \"number\": {\n          \"greater_than_or_equal_to\": 8\n        }\n      },\n      {\n        \"property\": \"状态\",\n        \"select\": {\n          \"equals\": \"可用\"\n        }\n      }\n    ]\n  },\n  \"sorts\": [\n    {\n      \"property\": \"热度评分\",\n      \"direction\": \"descending\"\n    }\n  ],\n  \"page_size\": 10\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "query-material",
+      "name": "查询素材库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/{{$env.NOTION_PRODUCT_DATABASE_ID}}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.NOTION_API_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"page_size\": 10\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "query-product",
+      "name": "查询产品库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 选择素材和产品\nconst materialData = $('查询素材库').first().json;\nconst productData = $('查询产品库').first().json;\n\nconst materials = materialData.results || [];\nconst products = productData.results || [];\n\nif (materials.length === 0) {\n  throw new Error('素材库为空，请先采集素材');\n}\n\nif (products.length === 0) {\n  throw new Error('产品库为空，请先添加产品');\n}\n\n// 随机选择1条素材\nconst selectedMaterial = materials[Math.floor(Math.random() * materials.length)];\n\n// 随机选择1-2款产品\nconst productCount = Math.random() > 0.5 ? 2 : 1;\nconst selectedProducts = [];\nconst usedIndices = new Set();\n\nwhile (selectedProducts.length < productCount && selectedProducts.length < products.length) {\n  const index = Math.floor(Math.random() * products.length);\n  if (!usedIndices.has(index)) {\n    usedIndices.add(index);\n    selectedProducts.push(products[index]);\n  }\n}\n\n// 提取素材信息\nconst materialTitle = selectedMaterial.properties['标题']?.title?.[0]?.text?.content || '无标题';\nconst materialSummary = selectedMaterial.properties['原文摘要']?.rich_text?.[0]?.text?.content || '';\nconst materialContent = selectedMaterial.properties['详细内容']?.rich_text?.[0]?.text?.content || materialSummary;\nconst materialAngles = selectedMaterial.properties['创作角度']?.rich_text?.[0]?.text?.content || '';\nconst materialTopics = selectedMaterial.properties['话题分类']?.multi_select?.map(t => t.name).join(', ') || '';\nconst materialMBTI = selectedMaterial.properties['MBTI相关']?.multi_select?.map(t => t.name).join(', ') || '';\n\n// 提取产品信息\nconst productInfos = selectedProducts.map(p => {\n  return {\n    name: p.properties['产品名称']?.title?.[0]?.text?.content || '未命名',\n    mbtiType: p.properties['MBTI类型']?.select?.name || '',\n    personality: p.properties['人格特质']?.rich_text?.[0]?.text?.content || '',\n    sellPoint: p.properties['核心卖点']?.rich_text?.[0]?.text?.content || '',\n    scene: p.properties['适合场景']?.rich_text?.[0]?.text?.content || '',\n    taste: p.properties['口味描述']?.rich_text?.[0]?.text?.content || ''\n  };\n});\n\nreturn [{\n  json: {\n    material: {\n      title: materialTitle,\n      summary: materialSummary,\n      content: materialContent,\n      angles: materialAngles,\n      topics: materialTopics,\n      mbti: materialMBTI\n    },\n    products: productInfos,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "select-data",
+      "name": "选择素材和产品",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_API_BASE_URL}}/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.OPENAI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL || 'gpt-4o-mini'}}\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"你是小红书爆款标题专家。请以JSON格式返回结果，不要包含其他内容。\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"基于以下信息生成小红书标题：\\n\\n【素材】\\n标题：{{ $json.material.title }}\\n摘要：{{ $json.material.summary }}\\n话题：{{ $json.material.topics }}\\nMBTI：{{ $json.material.mbti }}\\n\\n【产品】\\n{{ $json.products.map(p => `${p.name}（${p.mbtiType}）- ${p.sellPoint}`).join('\\n') }}\\n\\n【要求】\\n1. 15-25字\\n2. 包含数字或emoji\\n3. 包含MBTI关键词\\n4. 自然植入产品（不要太生硬）\\n5. 吸引眼球但不夸张\\n\\n返回JSON格式：\\n{\\n  \\\"title\\\": \\\"标题内容\\\",\\n  \\\"reason\\\": \\\"选择理由\\\"\\n}\"\n    }\n  ],\n  \"temperature\": 0.8,\n  \"max_tokens\": 200\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "generate-xhs-title",
+      "name": "AI生成小红书标题",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_API_BASE_URL}}/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.OPENAI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL || 'gpt-4o-mini'}}\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"你是小红书内容创作专家。请以JSON格式返回结果。\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"基于以下信息创作小红书笔记：\\n\\n【素材】\\n{{ $('选择素材和产品').item.json.material.content }}\\n\\n【产品】\\n{{ $('选择素材和产品').item.json.products.map(p => `产品：${p.name}\\nMBTI类型：${p.mbtiType}\\n人格特质：${p.personality}\\n核心卖点：${p.sellPoint}\\n适合场景：${p.scene}\\n口味：${p.taste}`).join('\\n\\n') }}\\n\\n【创作要求】\\n1. 800-1000字\\n2. 结构：开头引入（100字）+ MBTI知识科普（400字）+ 产品自然植入（300字）+ 结尾互动（100字）\\n3. 70%教育式内容 + 30%产品植入\\n4. 真实可信，避免硬广\\n5. 使用emoji增加可读性\\n6. 品牌理念：不被定义，自己定义\\n\\n【禁忌词】\\n绝对、必买、最好、第一、保证、神器\\n\\n返回JSON格式：\\n{\\n  \\\"content\\\": \\\"正文内容\\\",\\n  \\\"tags\\\": [\\\"标签1\\\", \\\"标签2\\\", ...],\\n  \\\"images\\\": [\\\"图1说明\\\", \\\"图2说明\\\", ...]\\n}\"\n    }\n  ],\n  \"temperature\": 0.7,\n  \"max_tokens\": 2000\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "generate-xhs-content",
+      "name": "AI生成小红书正文",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_API_BASE_URL}}/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.OPENAI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL || 'gpt-4o-mini'}}\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"你是公众号标题专家。请以JSON格式返回结果。\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"基于以下信息生成公众号标题：\\n\\n【素材】\\n{{ $('选择素材和产品').item.json.material.title }}\\n\\n【产品】\\n{{ $('选择素材和产品').item.json.products.map(p => p.name).join('、') }}\\n\\n【要求】\\n1. 10-30字\\n2. 吸引眼球\\n3. 包含价值点\\n4. 适合深度阅读\\n\\n返回JSON格式：\\n{\\n  \\\"title\\\": \\\"标题内容\\\"\\n}\"\n    }\n  ],\n  \"temperature\": 0.8,\n  \"max_tokens\": 200\n}",
+        "options": {
+          "timeout\": 60000
+        }
+      },
+      "id": "generate-wechat-title",
+      "name": "AI生成公众号标题",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_API_BASE_URL}}/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.OPENAI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL || 'gpt-4o-mini'}}\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"你是公众号深度内容创作专家。请以JSON格式返回结果。\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"基于以下信息创作公众号文章：\\n\\n【素材】\\n{{ $('选择素材和产品').item.json.material.content }}\\n\\n【产品】\\n{{ $('选择素材和产品').item.json.products.map(p => `产品：${p.name}\\nMBTI类型：${p.mbtiType}\\n人格特质：${p.personality}\\n核心卖点：${p.sellPoint}\\n适合场景：${p.scene}\\n口味：${p.taste}`).join('\\n\\n') }}\\n\\n【创作要求】\\n1. 2000-3000字\\n2. 结构：引言（200字）+ 4-5个小节（各400字）+ 产品介绍（300字）+ 结尾（200字）\\n3. 提供深度价值和洞察\\n4. 自然植入产品\\n5. 情感共鸣\\n6. 品牌理念：不被定义，自己定义\\n\\n返回JSON格式：\\n{\\n  \\\"intro\\\": \\\"引言\\\",\\n  \\\"sections\\\": [\\n    {\\\"subtitle\\\": \\\"小标题1\\\", \\\"content\\\": \\\"内容1\\\"},\\n    {\\\"subtitle\\\": \\\"小标题2\\\", \\\"content\\\": \\\"内容2\\\"},\\n    ...\\n  ],\\n  \\\"productIntro\\\": \\\"产品介绍\\\",\\n  \\\"ending\\\": \\\"结尾\\\"\\n}\"\n    }\n  ],\n  \"temperature\": 0.7,\n  \"max_tokens\": 4000\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "generate-wechat-content",
+      "name": "AI生成公众号正文",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 整合小红书内容\nconst selectedData = $('选择素材和产品').first().json;\nconst titleResponse = $('AI生成小红书标题').first().json;\nconst contentResponse = $('AI生成小红书正文').first().json;\n\n// 解析AI返回的JSON\nlet title = '默认标题';\nlet content = '';\nlet tags = [];\nlet images = [];\n\ntry {\n  const titleData = titleResponse.choices?.[0]?.message?.content || '{}';\n  const titleMatch = titleData.match(/\\{[\\s\\S]*\\}/);\n  if (titleMatch) {\n    const titleJson = JSON.parse(titleMatch[0]);\n    title = titleJson.title || title;\n  }\n} catch (e) {\n  title = selectedData.material.title + ' | ' + selectedData.products[0].name;\n}\n\ntry {\n  const contentData = contentResponse.choices?.[0]?.message?.content || '{}';\n  const contentMatch = contentData.match(/\\{[\\s\\S]*\\}/);\n  if (contentMatch) {\n    const contentJson = JSON.parse(contentMatch[0]);\n    content = contentJson.content || '';\n    tags = contentJson.tags || [];\n    images = contentJson.images || [];\n  }\n} catch (e) {\n  content = '内容生成失败，请手动编辑';\n}\n\nconst today = new Date().toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    title: title,\n    content: content,\n    tags: tags,\n    images: images,\n    platform: '小红书',\n    contentType: '图文笔记',\n    materialSource: selectedData.material.title,\n    relatedProducts: selectedData.products.map(p => p.name).join('、'),\n    status: '待审核',\n    createdAt: today\n  }\n}];"
+      },
+      "id": "merge-xhs-content",
+      "name": "整合小红书内容",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 整合公众号内容\nconst selectedData = $('选择素材和产品').first().json;\nconst titleResponse = $('AI生成公众号标题').first().json;\nconst contentResponse = $('AI生成公众号正文').first().json;\n\n// 解析AI返回的JSON\nlet title = '默认标题';\nlet fullContent = '';\n\ntry {\n  const titleData = titleResponse.choices?.[0]?.message?.content || '{}';\n  const titleMatch = titleData.match(/\\{[\\s\\S]*\\}/);\n  if (titleMatch) {\n    const titleJson = JSON.parse(titleMatch[0]);\n    title = titleJson.title || title;\n  }\n} catch (e) {\n  title = selectedData.material.title + ' | ' + selectedData.products[0].name;\n}\n\ntry {\n  const contentData = contentResponse.choices?.[0]?.message?.content || '{}';\n  const contentMatch = contentData.match(/\\{[\\s\\S]*\\}/);\n  if (contentMatch) {\n    const contentJson = JSON.parse(contentMatch[0]);\n    \n    // 组装完整文章\n    fullContent = contentJson.intro + '\\n\\n';\n    \n    if (contentJson.sections && Array.isArray(contentJson.sections)) {\n      contentJson.sections.forEach(section => {\n        fullContent += `## ${section.subtitle}\\n\\n${section.content}\\n\\n`;\n      });\n    }\n    \n    fullContent += `## 产品推荐\\n\\n${contentJson.productIntro}\\n\\n`;\n    fullContent += contentJson.ending;\n  }\n} catch (e) {\n  fullContent = '内容生成失败，请手动编辑';\n}\n\nconst today = new Date().toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    title: title,\n    content: fullContent,\n    platform: '公众号',\n    contentType: '深度文章',\n    materialSource: selectedData.material.title,\n    relatedProducts: selectedData.products.map(p => p.name).join('、'),\n    status: '待审核',\n    createdAt: today\n  }\n}];"
+      },
+      "id": "merge-wechat-content",
+      "name": "整合公众号内容",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 构建Notion请求体（小红书）\nconst d = $json;\nconst body = {\n  parent: { database_id: process.env.NOTION_CREATION_DATABASE_ID },\n  properties: {\n    '标题': { title: [{ text: { content: d.title } }] },\n    '平台': { select: { name: d.platform } },\n    '内容类型': { select: { name: d.contentType } },\n    '正文': { rich_text: [{ text: { content: d.content.substring(0, 2000) } }] },\n    '标签': { multi_select: d.tags.slice(0, 5).map(tag => ({ name: tag })) },\n    '配图建议': { rich_text: [{ text: { content: d.images.join('\\n').substring(0, 500) } }] },\n    '素材来源': { rich_text: [{ text: { content: d.materialSource } }] },\n    '关联产品': { rich_text: [{ text: { content: d.relatedProducts } }] },\n    '状态': { select: { name: d.status } },\n    '创建时间': { date: { start: d.createdAt } }\n  }\n};\nreturn [{ json: { notionBody: JSON.stringify(body), originalData: d } }];"
+      },
+      "id": "build-xhs-notion",
+      "name": "构建小红书Notion请求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 构建Notion请求体（公众号）\nconst d = $json;\nconst body = {\n  parent: { database_id: process.env.NOTION_CREATION_DATABASE_ID },\n  properties: {\n    '标题': { title: [{ text: { content: d.title } }] },\n    '平台': { select: { name: d.platform } },\n    '内容类型': { select: { name: d.contentType } },\n    '正文': { rich_text: [{ text: { content: d.content.substring(0, 2000) } }] },\n    '素材来源': { rich_text: [{ text: { content: d.materialSource } }] },\n    '关联产品': { rich_text: [{ text: { content: d.relatedProducts } }] },\n    '状态': { select: { name: d.status } },\n    '创建时间': { date: { start: d.createdAt } }\n  }\n};\nreturn [{ json: { notionBody: JSON.stringify(body), originalData: d } }];"
+      },
+      "id": "build-wechat-notion",
+      "name": "构建公众号Notion请求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.NOTION_API_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.notionBody }}",
+        "options": {}
+      },
+      "id": "write-xhs-notion",
+      "name": "写入小红书创作库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.NOTION_API_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.notionBody }}",
+        "options": {}
+      },
+      "id": "write-wechat-notion",
+      "name": "写入公众号创作库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData"
+      },
+      "id": "aggregate-results",
+      "name": "汇总结果",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [2010, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成执行摘要\nconst items = $input.first().json.data || [];\nconst xhsSuccess = items.filter(item => item.originalData?.platform === '小红书' && item.id).length;\nconst wechatSuccess = items.filter(item => item.originalData?.platform === '公众号' && item.id).length;\n\nconst selectedData = $('选择素材和产品').first().json;\n\nconst summary = `MBTI内容创作报告\n========================\n执行时间: ${new Date().toLocaleString('zh-CN')}\n\n【素材】\n- ${selectedData.material.title}\n- 话题: ${selectedData.material.topics}\n\n【产品】\n${selectedData.products.map(p => `- ${p.name} (${p.mbtiType})`).join('\\n')}\n\n【创作结果】\n- 小红书: ${xhsSuccess > 0 ? '✓ 成功' : '✗ 失败'}\n- 公众号: ${wechatSuccess > 0 ? '✓ 成功' : '✗ 失败'}\n\n【下一步】\n1. 在Notion创作库中审核内容\n2. 修改优化后标记为"已审核"\n3. 使用发布工作流发布到平台`;\n\nreturn [{\n  json: {\n    report: summary,\n    xhsSuccess,\n    wechatSuccess,\n    totalSuccess: xhsSuccess + wechatSuccess,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "generate-summary",
+      "name": "生成执行摘要",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2230, 300]
+    }
+  ],
+  "connections": {
+    "周一三五9点执行": {
+      "main": [[{"node": "查询素材库", "type": "main", "index": 0}]]
+    },
+    "手动触发": {
+      "main": [[{"node": "查询素材库", "type": "main", "index": 0}]]
+    },
+    "查询素材库": {
+      "main": [[{"node": "查询产品库", "type": "main", "index": 0}]]
+    },
+    "查询产品库": {
+      "main": [[{"node": "选择素材和产品", "type": "main", "index": 0}]]
+    },
+    "选择素材和产品": {
+      "main": [
+        [
+          {"node": "AI生成小红书标题", "type": "main", "index": 0},
+          {"node": "AI生成公众号标题", "type": "main", "index": 0}
+        ]
+      ]
+    },
+    "AI生成小红书标题": {
+      "main": [[{"node": "AI生成小红书正文", "type": "main", "index": 0}]]
+    },
+    "AI生成小红书正文": {
+      "main": [[{"node": "整合小红书内容", "type": "main", "index": 0}]]
+    },
+    "AI生成公众号标题": {
+      "main": [[{"node": "AI生成公众号正文", "type": "main", "index": 0}]]
+    },
+    "AI生成公众号正文": {
+      "main": [[{"node": "整合公众号内容", "type": "main", "index": 0}]]
+    },
+    "整合小红书内容": {
+      "main": [[{"node": "构建小红书Notion请求", "type": "main", "index": 0}]]
+    },
+    "整合公众号内容": {
+      "main": [[{"node": "构建公众号Notion请求", "type": "main", "index": 0}]]
+    },
+    "构建小红书Notion请求": {
+      "main": [[{"node": "写入小红书创作库", "type": "main", "index": 0}]]
+    },
+    "构建公众号Notion请求": {
+      "main": [[{"node": "写入公众号创作库", "type": "main", "index": 0}]]
+    },
+    "写入小红书创作库": {
+      "main": [[{"node": "汇总结果", "type": "main", "index": 0}]]
+    },
+    "写入公众号创作库": {
+      "main": [[{"node": "汇总结果", "type": "main", "index": 0}]]
+    },
+    "汇总结果": {
+      "main": [[{"node": "生成执行摘要", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
