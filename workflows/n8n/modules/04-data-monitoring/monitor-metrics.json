@@ -1,0 +1,183 @@
+{
+  "name": "数据监测-基础指标",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "cronExpression", "expression": "0 */6 * * *"}]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "每6小时执行",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/{{$env.NOTION_PUBLISH_DB_ID}}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"property\": \"发布状态\",\n    \"select\": {\"equals\": \"成功\"}\n  },\n  \"sorts\": [{\"property\": \"发布时间\", \"direction\": \"descending\"}],\n  \"page_size\": 20\n}",
+        "options": {"timeout": 10000}
+      },
+      "id": "query-published",
+      "name": "查询已发布内容",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取发布数据\nconst data = $input.first().json;\nconst results = data.results || [];\n\nif (results.length === 0) {\n  throw new Error('没有已发布的内容需要监测');\n}\n\nconst items = [];\nfor (const page of results) {\n  const props = page.properties;\n  const publishUrl = props['发布链接']?.url || '';\n  \n  // 只监测有效链接\n  if (publishUrl && !publishUrl.includes('placeholder')) {\n    items.push({\n      json: {\n        publishPageId: page.id,\n        publishId: props['发布ID']?.rich_text?.[0]?.text?.content || '',\n        title: props['标题']?.title?.[0]?.text?.content || '无标题',\n        platform: props['平台']?.select?.name || '',\n        publishUrl: publishUrl,\n        platformContentId: props['平台内容ID']?.rich_text?.[0]?.text?.content || '',\n        publishTime: props['发布时间']?.date?.start || '',\n        timestamp: new Date().toISOString()\n      }\n    });\n  }\n}\n\nif (items.length === 0) {\n  throw new Error('没有有效的发布链接需要监测');\n}\n\nreturn items;"
+      },
+      "id": "extract-published",
+      "name": "提取发布数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 根据平台选择抓取策略\nconst d = $json;\n\n// 注意：各平台数据抓取需要对应的API或爬虫\n// 这里提供模拟数据和实现思路\n\nlet fetchMethod = '';\nlet apiEndpoint = '';\n\nswitch (d.platform) {\n  case '小红书':\n    fetchMethod = 'xiaohongshu_api';\n    apiEndpoint = `https://www.xiaohongshu.com/discovery/item/${d.platformContentId}`;\n    break;\n  case '微信公众号':\n    fetchMethod = 'wechat_api';\n    apiEndpoint = d.publishUrl;\n    break;\n  case '知乎':\n    fetchMethod = 'zhihu_api';\n    apiEndpoint = d.publishUrl;\n    break;\n  default:\n    fetchMethod = 'manual';\n    apiEndpoint = d.publishUrl;\n}\n\nreturn [{\n  json: {\n    ...d,\n    fetchMethod: fetchMethod,\n    apiEndpoint: apiEndpoint\n  }\n}];"
+      },
+      "id": "prepare-fetch",
+      "name": "准备抓取策略",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 抓取数据（模拟）\n// 实际应该调用对应平台的API或爬虫\n\nconst d = $json;\n\n// 模拟数据（实际应该从API获取）\nconst mockData = {\n  views: Math.floor(Math.random() * 10000) + 100,\n  likes: Math.floor(Math.random() * 500) + 10,\n  comments: Math.floor(Math.random() * 100) + 1,\n  shares: Math.floor(Math.random() * 50) + 1,\n  collects: Math.floor(Math.random() * 200) + 5,\n  clicks: Math.floor(Math.random() * 300) + 10,\n  conversions: Math.floor(Math.random() * 10),\n  newFollowers: Math.floor(Math.random() * 20)\n};\n\n// 计算互动率\nconst engagementRate = ((mockData.likes + mockData.comments + mockData.shares) / mockData.views * 100).toFixed(2);\n\n// 计算转化率\nconst conversionRate = mockData.clicks > 0 ? (mockData.conversions / mockData.clicks * 100).toFixed(2) : 0;\n\nreturn [{\n  json: {\n    ...d,\n    metrics: mockData,\n    engagementRate: parseFloat(engagementRate),\n    conversionRate: parseFloat(conversionRate),\n    fetchTime: new Date().toISOString(),\n    // 实际实现示例：\n    // metrics: await fetchPlatformData(d.platform, d.platformContentId)\n  }\n}];"
+      },
+      "id": "fetch-metrics",
+      "name": "抓取平台数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 整合监测数据\nconst d = $json;\nconst m = d.metrics;\n\nreturn [{\n  json: {\n    publishPageId: d.publishPageId,\n    publishId: d.publishId,\n    title: d.title,\n    platform: d.platform,\n    collectTime: d.fetchTime,\n    views: m.views,\n    likes: m.likes,\n    comments: m.comments,\n    shares: m.shares,\n    collects: m.collects,\n    clicks: m.clicks,\n    conversions: m.conversions,\n    newFollowers: m.newFollowers,\n    engagementRate: d.engagementRate,\n    conversionRate: d.conversionRate,\n    dataSnapshot: JSON.stringify(m)\n  }\n}];"
+      },
+      "id": "merge-metrics",
+      "name": "整合监测数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 构建Notion数据库请求\nconst d = $json;\nconst body = {\n  parent: { database_id: process.env.NOTION_ANALYTICS_DB_ID },\n  properties: {\n    '标题': { title: [{ text: { content: d.title.substring(0, 100) } }] },\n    '平台': { select: { name: d.platform } },\n    '采集时间': { date: { start: d.collectTime } },\n    '阅读量': { number: d.views },\n    '点赞数': { number: d.likes },\n    '评论数': { number: d.comments },\n    '转发数': { number: d.shares },\n    '收藏数': { number: d.collects },\n    '互动率': { number: d.engagementRate },\n    '点击量': { number: d.clicks },\n    '转化数': { number: d.conversions },\n    '转化率': { number: d.conversionRate },\n    '涨粉数': { number: d.newFollowers },\n    '数据快照': { rich_text: [{ text: { content: d.dataSnapshot.substring(0, 2000) } }] }\n  }\n};\nreturn [{ json: { notionBody: JSON.stringify(body), originalData: d } }];"
+      },
+      "id": "build-notion-request",
+      "name": "构建Notion请求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.notionBody }}",
+        "options": {}
+      },
+      "id": "write-analytics-db",
+      "name": "写入数据库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1570, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{$('整合监测数据').item.json.publishPageId}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"当前数据\": {\n      \"rich_text\": [{\n        \"text\": {\n          \"content\": \"阅读{{$('整合监测数据').item.json.views}}/点赞{{$('整合监测数据').item.json.likes}}/评论{{$('整合监测数据').item.json.comments}}/转发{{$('整合监测数据').item.json.shares}}\"\n        }\n      }]\n    },\n    \"最后更新\": {\n      \"date\": {\"start\": \"{{$('整合监测数据').item.json.collectTime}}\"}\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "update-publish-db",
+      "name": "更新发布库数据",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData"
+      },
+      "id": "aggregate",
+      "name": "汇总结果",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [2010, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成执行摘要\nconst items = $input.first().json.data || [];\nconst successCount = items.filter(item => item.id).length;\n\n// 计算总计数据\nlet totalViews = 0;\nlet totalLikes = 0;\nlet totalComments = 0;\nlet avgEngagement = 0;\n\nitems.forEach(item => {\n  const d = item.originalData;\n  if (d) {\n    totalViews += d.views || 0;\n    totalLikes += d.likes || 0;\n    totalComments += d.comments || 0;\n    avgEngagement += d.engagementRate || 0;\n  }\n});\n\nif (successCount > 0) {\n  avgEngagement = (avgEngagement / successCount).toFixed(2);\n}\n\nconst summary = `数据监测报告\n==================\n执行时间: ${new Date().toLocaleString('zh-CN')}\n\n【监测结果】\n- 成功: ${successCount}条\n- 失败: ${items.length - successCount}条\n\n【数据汇总】\n- 总阅读量: ${totalViews.toLocaleString()}\n- 总点赞数: ${totalLikes.toLocaleString()}\n- 总评论数: ${totalComments.toLocaleString()}\n- 平均互动率: ${avgEngagement}%\n\n【TOP内容】\n${items.slice(0, 5).map((item, i) => {\n  const d = item.originalData;\n  return `${i+1}. [${d?.platform}] ${d?.title}\\n   阅读:${d?.views} 点赞:${d?.likes} 互动率:${d?.engagementRate}%`;\n}).join('\\n\\n')}\n\n【下一步】\n1. 在Notion数据库中查看详细数据\n2. 分析高互动内容的特点\n3. 优化后续内容策略`;\n\nreturn [{\n  json: {\n    report: summary,\n    successCount,\n    totalCount: items.length,\n    totalViews,\n    totalLikes,\n    totalComments,\n    avgEngagement: parseFloat(avgEngagement),\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "generate-summary",
+      "name": "生成执行摘要",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2230, 300]
+    }
+  ],
+  "connections": {
+    "每6小时执行": {"main": [[{"node": "查询已发布内容", "type": "main", "index": 0}]]},
+    "手动触发": {"main": [[{"node": "查询已发布内容", "type": "main", "index": 0}]]},
+    "查询已发布内容": {"main": [[{"node": "提取发布数据", "type": "main", "index": 0}]]},
+    "提取发布数据": {"main": [[{"node": "准备抓取策略", "type": "main", "index": 0}]]},
+    "准备抓取策略": {"main": [[{"node": "抓取平台数据", "type": "main", "index": 0}]]},
+    "抓取平台数据": {"main": [[{"node": "整合监测数据", "type": "main", "index": 0}]]},
+    "整合监测数据": {"main": [[{"node": "构建Notion请求", "type": "main", "index": 0}]]},
+    "构建Notion请求": {"main": [[{"node": "写入数据库", "type": "main", "index": 0}]]},
+    "写入数据库": {"main": [[{"node": "更新发布库数据", "type": "main", "index": 0}]]},
+    "更新发布库数据": {"main": [[{"node": "汇总结果", "type": "main", "index": 0}]]},
+    "汇总结果": {"main": [[{"node": "生成执行摘要", "type": "main", "index": 0}]]}
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,218 @@
+{
+  "name": "内容创作-AI生成",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "cronExpression", "expression": "0 9 * * 1,3,5"}]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "周一三五9点执行",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/{{$env.NOTION_MATERIAL_DB_ID}}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"and\": [\n      {\"property\": \"契合度评分\", \"number\": {\"greater_than_or_equal_to\": 7}},\n      {\"property\": \"状态\", \"select\": {\"equals\": \"可用\"}}\n    ]\n  },\n  \"sorts\": [{\"property\": \"契合度评分\", \"direction\": \"descending\"}],\n  \"page_size\": 10\n}",
+        "options": {"timeout": 10000}
+      },
+      "id": "query-materials",
+      "name": "查询素材库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/{{$env.NOTION_PRODUCT_DB_ID}}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\"property\": \"销售状态\", \"select\": {\"equals\": \"在售\"}},\n  \"page_size\": 20\n}",
+        "options": {"timeout": 10000}
+      },
+      "id": "query-products",
+      "name": "查询产品库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 智能选择素材和产品\nconst materialData = $('查询素材库').first().json;\nconst productData = $('查询产品库').first().json;\n\nconst materials = materialData.results || [];\nconst products = productData.results || [];\n\nif (materials.length === 0) throw new Error('素材库为空');\nif (products.length === 0) throw new Error('产品库为空');\n\n// 随机选择1条素材\nconst material = materials[Math.floor(Math.random() * materials.length)];\n\n// 提取素材信息\nconst materialInfo = {\n  id: material.id,\n  title: material.properties['标题']?.title?.[0]?.text?.content || '无标题',\n  summary: material.properties['原文摘要']?.rich_text?.[0]?.text?.content || '',\n  content: material.properties['详细内容']?.rich_text?.[0]?.text?.content || '',\n  angles: material.properties['创作角度']?.rich_text?.[0]?.text?.content || '',\n  keywords: material.properties['SEO关键词']?.multi_select?.map(k => k.name) || [],\n  tags: material.properties['话题分类']?.multi_select?.map(t => t.name) || [],\n  relatedTags: material.properties['关联产品']?.multi_select?.map(t => t.name) || []\n};\n\n// 基于素材标签匹配产品\nlet matchedProducts = products.filter(p => {\n  const productTags = p.properties['产品标签']?.multi_select?.map(t => t.name) || [];\n  return materialInfo.relatedTags.some(tag => productTags.includes(tag));\n});\n\n// 如果没有匹配，随机选择\nif (matchedProducts.length === 0) {\n  matchedProducts = products;\n}\n\n// 选择1-2款产品\nconst productCount = Math.random() > 0.5 ? 2 : 1;\nconst selectedProducts = [];\nconst usedIndices = new Set();\n\nwhile (selectedProducts.length < productCount && selectedProducts.length < matchedProducts.length) {\n  const index = Math.floor(Math.random() * matchedProducts.length);\n  if (!usedIndices.has(index)) {\n    usedIndices.add(index);\n    const p = matchedProducts[index];\n    selectedProducts.push({\n      id: p.id,\n      name: p.properties['产品名称']?.title?.[0]?.text?.content || '未命名',\n      tags: p.properties['产品标签']?.multi_select?.map(t => t.name) || [],\n      sellPoints: p.properties['核心卖点']?.rich_text?.[0]?.text?.content || '',\n      description: p.properties['产品描述']?.rich_text?.[0]?.text?.content || '',\n      scene: p.properties['使用场景']?.rich_text?.[0]?.text?.content || '',\n      strategy: p.properties['植入策略']?.rich_text?.[0]?.text?.content || ''\n    });\n  }\n}\n\n// 读取平台配置\nconst platforms = (process.env.CONTENT_PLATFORMS || '小红书,微信公众号').split(',');\n\nreturn [{\n  json: {\n    material: materialInfo,\n    products: selectedProducts,\n    platforms: platforms.map(p => p.trim()),\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "select-data",
+      "name": "智能选择数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 为每个平台创建任务\nconst data = $input.first().json;\nconst items = [];\n\nfor (const platform of data.platforms) {\n  items.push({\n    json: {\n      ...data,\n      platform: platform\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "split-platforms",
+      "name": "拆分平台任务",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_API_BASE_URL}}/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Authorization", "value": "Bearer {{$env.OPENAI_API_KEY}}"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL || 'gpt-4o-mini'}}\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"你是{{$json.platform}}内容创作专家。请以JSON格式返回：{\\\"title\\\": \\\"标题\\\", \\\"reason\\\": \\\"选择理由\\\"}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"基于以下信息生成{{$json.platform}}标题：\\n\\n【素材】\\n{{$json.material.title}}\\n{{$json.material.summary}}\\n\\n【产品】\\n{{$json.products.map(p => p.name + ': ' + p.sellPoints).join('\\n')}}\\n\\n【要求】\\n平台：{{$json.platform}}\\n字数：{{$json.platform === '小红书' ? '15-25字' : '10-30字'}}\\n风格：吸引眼球、包含价值点\\n产品：自然植入，不要太生硬\"\n    }\n  ],\n  \"temperature\": 0.8,\n  \"max_tokens\": 200\n}",
+        "options": {"timeout": 60000}
+      },
+      "id": "generate-title",
+      "name": "AI生成标题",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_API_BASE_URL}}/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Authorization", "value": "Bearer {{$env.OPENAI_API_KEY}}"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL || 'gpt-4o-mini'}}\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"你是{{$('拆分平台任务').item.json.platform}}内容创作专家。请以JSON格式返回：{\\\"content\\\": \\\"正文\\\", \\\"tags\\\": [\\\"标签1\\\"], \\\"images\\\": [\\\"图1说明\\\"]}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"创作{{$('拆分平台任务').item.json.platform}}内容：\\n\\n【素材】\\n{{$('拆分平台任务').item.json.material.content || $('拆分平台任务').item.json.material.summary}}\\n\\n【产品】\\n{{$('拆分平台任务').item.json.products.map(p => `${p.name}\\n卖点：${p.sellPoints}\\n场景：${p.scene}\\n策略：${p.strategy}`).join('\\n\\n')}}\\n\\n【要求】\\n平台：{{$('拆分平台任务').item.json.platform}}\\n字数：{{$('拆分平台任务').item.json.platform === '小红书' ? '800-1000字' : '2000-3000字'}}\\n结构：{{$('拆分平台任务').item.json.platform === '小红书' ? '引入+知识+产品+互动' : '引言+章节+产品+结尾'}}\\n风格：70%教育价值 + 30%产品植入\\n禁忌：避免硬广、夸张、绝对化表述\"\n    }\n  ],\n  \"temperature\": 0.7,\n  \"max_tokens\": {{$('拆分平台任务').item.json.platform === '小红书' ? 2000 : 4000}}\n}",
+        "options": {"timeout": 60000}
+      },
+      "id": "generate-content",
+      "name": "AI生成正文",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 整合生成的内容\nconst taskData = $('拆分平台任务').item.json;\nconst titleResponse = $('AI生成标题').item.json;\nconst contentResponse = $input.first().json;\n\n// 解析标题\nlet title = taskData.material.title;\ntry {\n  const titleData = titleResponse.choices?.[0]?.message?.content || '{}';\n  const match = titleData.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    const parsed = JSON.parse(match[0]);\n    title = parsed.title || title;\n  }\n} catch (e) {}\n\n// 解析正文\nlet content = '';\nlet tags = [];\nlet images = [];\ntry {\n  const contentData = contentResponse.choices?.[0]?.message?.content || '{}';\n  const match = contentData.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    const parsed = JSON.parse(match[0]);\n    content = parsed.content || '';\n    tags = parsed.tags || [];\n    images = parsed.images || [];\n  }\n} catch (e) {\n  content = '内容生成失败，请手动编辑';\n}\n\nconst contentId = 'C' + Date.now() + Math.random().toString(36).substr(2, 5).toUpperCase();\n\nreturn [{\n  json: {\n    contentId: contentId,\n    title: title,\n    platform: taskData.platform,\n    contentType: taskData.platform === '小红书' ? '图文' : '深度文章',\n    content: content,\n    tags: tags,\n    images: images,\n    materialId: taskData.material.id,\n    materialTitle: taskData.material.title,\n    productIds: taskData.products.map(p => p.id),\n    productNames: taskData.products.map(p => p.name).join('、'),\n    generateMethod: 'AI生成',\n    aiModel: process.env.AI_MODEL || 'gpt-4o-mini',\n    strategy: '教育式',\n    wordCount: content.length,\n    status: '待审核',\n    createdAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "merge-content",
+      "name": "整合内容数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 构建Notion请求体\nconst d = $json;\nconst body = {\n  parent: { database_id: process.env.NOTION_CONTENT_DB_ID },\n  properties: {\n    '标题': { title: [{ text: { content: d.title.substring(0, 100) } }] },\n    '内容ID': { rich_text: [{ text: { content: d.contentId } }] },\n    '平台': { select: { name: d.platform } },\n    '内容类型': { select: { name: d.contentType } },\n    '正文': { rich_text: [{ text: { content: d.content.substring(0, 2000) } }] },\n    '话题标签': { multi_select: d.tags.slice(0, 10).map(t => ({ name: t })) },\n    '配图列表': { rich_text: [{ text: { content: d.images.join('\\n').substring(0, 500) } }] },\n    '生成方式': { select: { name: d.generateMethod } },\n    'AI模型': { select: { name: d.aiModel } },\n    '内容策略': { select: { name: d.strategy } },\n    '字数': { number: d.wordCount },\n    '状态': { select: { name: d.status } },\n    '创建时间': { date: { start: d.createdAt } }\n  }\n};\nreturn [{ json: { notionBody: JSON.stringify(body), originalData: d } }];"
+      },
+      "id": "build-notion-request",
+      "name": "构建Notion请求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.notionBody }}",
+        "options": {}
+      },
+      "id": "write-notion",
+      "name": "写入内容库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2010, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData"
+      },
+      "id": "aggregate",
+      "name": "汇总结果",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [2230, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成执行摘要\nconst items = $input.first().json.data || [];\nconst successCount = items.filter(item => item.id).length;\n\nconst summary = `内容创作报告\n==================\n执行时间: ${new Date().toLocaleString('zh-CN')}\n\n【创作结果】\n- 成功: ${successCount}篇\n- 失败: ${items.length - successCount}篇\n\n【内容列表】\n${items.slice(0, 5).map((item, i) => {\n  const d = item.originalData;\n  return `${i+1}. [${d?.platform}] ${d?.title} (${d?.wordCount}字)`;\n}).join('\\n')}\n\n【下一步】\n1. 在Notion内容库中审核内容\n2. 修改优化后标记为"已审核"\n3. 使用发布工作流发布到平台`;\n\nreturn [{\n  json: {\n    report: summary,\n    successCount,\n    totalCount: items.length,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "generate-summary",
+      "name": "生成执行摘要",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2450, 300]
+    }
+  ],
+  "connections": {
+    "周一三五9点执行": {"main": [[{"node": "查询素材库", "type": "main", "index": 0}]]},
+    "手动触发": {"main": [[{"node": "查询素材库", "type": "main", "index": 0}]]},
+    "查询素材库": {"main": [[{"node": "查询产品库", "type": "main", "index": 0}]]},
+    "查询产品库": {"main": [[{"node": "智能选择数据", "type": "main", "index": 0}]]},
+    "智能选择数据": {"main": [[{"node": "拆分平台任务", "type": "main", "index": 0}]]},
+    "拆分平台任务": {"main": [[{"node": "AI生成标题", "type": "main", "index": 0}]]},
+    "AI生成标题": {"main": [[{"node": "AI生成正文", "type": "main", "index": 0}]]},
+    "AI生成正文": {"main": [[{"node": "整合内容数据", "type": "main", "index": 0}]]},
+    "整合内容数据": {"main": [[{"node": "构建Notion请求", "type": "main", "index": 0}]]},
+    "构建Notion请求": {"main": [[{"node": "写入内容库", "type": "main", "index": 0}]]},
+    "写入内容库": {"main": [[{"node": "汇总结果", "type": "main", "index": 0}]]},
+    "汇总结果": {"main": [[{"node": "生成执行摘要", "type": "main", "index": 0}]]}
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

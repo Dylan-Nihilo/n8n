@@ -1,0 +1,202 @@
+{
+  "name": "热点抓取-搜索引擎",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "cronExpression", "expression": "0 */6 * * *"}]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "每6小时执行",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 读取配置：关键词列表\nconst keywords = (process.env.TREND_KEYWORDS || 'MBTI').split(',');\nconst searchEngines = ['google', 'baidu', 'weibo'];\nconst items = [];\n\nfor (const keyword of keywords) {\n  for (const engine of searchEngines) {\n    items.push({\n      json: {\n        keyword: keyword.trim(),\n        engine: engine,\n        timestamp: new Date().toISOString()\n      }\n    });\n  }\n}\n\nreturn items;"
+      },
+      "id": "prepare-searches",
+      "name": "准备搜索任务",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://serpapi.com/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "q", "value": "={{$json.keyword}}"},
+            {"name": "api_key", "value": "={{$env.SERPAPI_KEY}}"},
+            {"name": "engine", "value": "={{$json.engine}}"},
+            {"name": "gl", "value": "cn"},
+            {"name": "hl", "value": "zh-cn"},
+            {"name": "num", "value": "10"}
+          ]
+        },
+        "options": {"timeout": 30000}
+      },
+      "id": "search-api",
+      "name": "调用搜索API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取搜索结果\nconst input = $input.first().json;\nconst results = input.organic_results || [];\nconst items = [];\n\nfor (const result of results.slice(0, 5)) {\n  // 计算热度值（基于排名）\n  const position = result.position || 10;\n  const hotScore = Math.max(100 - position * 10, 10);\n  \n  items.push({\n    json: {\n      title: result.title || '无标题',\n      url: result.link || '',\n      snippet: result.snippet || '',\n      source: $('准备搜索任务').item.json.engine,\n      keyword: $('准备搜索任务').item.json.keyword,\n      hotScore: hotScore,\n      position: position,\n      timestamp: new Date().toISOString()\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "extract-results",
+      "name": "提取搜索结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$json.url}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "User-Agent", "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+          ]
+        },
+        "options": {"timeout": 15000, "redirect": {"redirect": {"followRedirects": true}}}
+      },
+      "id": "fetch-page",
+      "name": "抓取网页内容",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取HTML文本内容\nconst html = $input.first().json.data || '';\n\n// 简单的HTML清理（移除标签）\nlet text = html\n  .replace(/<script[^>]*>.*?<\\/script>/gi, '')\n  .replace(/<style[^>]*>.*?<\\/style>/gi, '')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\n// 截取前1000字\ntext = text.substring(0, 1000);\n\nconst prevData = $('提取搜索结果').item.json;\n\nreturn [{\n  json: {\n    ...prevData,\n    content: text,\n    contentLength: text.length\n  }\n}];"
+      },
+      "id": "extract-text",
+      "name": "提取文本内容",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_API_BASE_URL}}/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Authorization", "value": "Bearer {{$env.OPENAI_API_KEY}}"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL || 'gpt-4o-mini'}}\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"你是热点分析专家。分析内容并返回JSON格式：{\\\"summary\\\": \\\"100字摘要\\\", \\\"keywords\\\": [\\\"关键词1\\\", \\\"关键词2\\\"], \\\"category\\\": [\\\"分类1\\\"], \\\"audience\\\": [\\\"受众1\\\"], \\\"sentiment\\\": \\\"正面/中性/负面\\\", \\\"relevance\\\": 8}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"分析以下内容：\\n\\n标题：{{ $json.title }}\\n\\n内容：{{ $json.content }}\\n\\n关键词：{{ $json.keyword }}\"\n    }\n  ],\n  \"temperature\": 0.3,\n  \"max_tokens\": 500\n}",
+        "options": {"timeout": 60000}
+      },
+      "id": "ai-analyze",
+      "name": "AI分析内容",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 整合数据\nconst prevData = $('提取文本内容').item.json;\nconst aiResponse = $input.first().json;\n\n// 解析AI返回的JSON\nlet analysis = {\n  summary: prevData.snippet,\n  keywords: [prevData.keyword],\n  category: ['未分类'],\n  audience: ['通用'],\n  sentiment: '中性',\n  relevance: 5\n};\n\ntry {\n  const aiContent = aiResponse.choices?.[0]?.message?.content || '{}';\n  const match = aiContent.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    const parsed = JSON.parse(match[0]);\n    analysis = { ...analysis, ...parsed };\n  }\n} catch (e) {\n  // 使用默认值\n}\n\nreturn [{\n  json: {\n    title: prevData.title,\n    source: prevData.source,\n    sourceUrl: prevData.url,\n    summary: analysis.summary,\n    content: prevData.content,\n    hotScore: prevData.hotScore,\n    keywords: analysis.keywords,\n    category: analysis.category,\n    audience: analysis.audience,\n    sentiment: analysis.sentiment,\n    relevance: analysis.relevance,\n    status: '待筛选',\n    discoveredAt: prevData.timestamp\n  }\n}];"
+      },
+      "id": "merge-data",
+      "name": "整合数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 构建Notion请求体\nconst d = $json;\nconst body = {\n  parent: { database_id: process.env.NOTION_HOTSPOT_DB_ID },\n  properties: {\n    '标题': { title: [{ text: { content: d.title.substring(0, 100) } }] },\n    '来源': { select: { name: d.source } },\n    '来源URL': { url: d.sourceUrl },\n    '摘要': { rich_text: [{ text: { content: d.summary.substring(0, 2000) } }] },\n    '热度值': { number: d.hotScore },\n    '发现时间': { date: { start: d.discoveredAt } },\n    '关键词': { multi_select: d.keywords.slice(0, 5).map(k => ({ name: k })) },\n    '分类': { multi_select: d.category.slice(0, 3).map(c => ({ name: c })) },\n    '目标受众': { multi_select: d.audience.slice(0, 3).map(a => ({ name: a })) },\n    '情感倾向': { select: { name: d.sentiment } },\n    '状态': { select: { name: d.status } }\n  }\n};\nreturn [{ json: { notionBody: JSON.stringify(body), originalData: d } }];"
+      },
+      "id": "build-notion-request",
+      "name": "构建Notion请求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.notionBody }}",
+        "options": {}
+      },
+      "id": "write-notion",
+      "name": "写入热点库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2010, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData"
+      },
+      "id": "aggregate",
+      "name": "汇总结果",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [2230, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成执行摘要\nconst items = $input.first().json.data || [];\nconst successCount = items.filter(item => item.id).length;\nconst failCount = items.length - successCount;\n\nconst summary = `热点抓取报告\n==================\n执行时间: ${new Date().toLocaleString('zh-CN')}\n\n【抓取结果】\n- 成功: ${successCount}条\n- 失败: ${failCount}条\n- 总计: ${items.length}条\n\n【热点分布】\n${items.slice(0, 5).map((item, i) => `${i+1}. ${item.originalData?.title || '未知'} (热度:${item.originalData?.hotScore || 0})`).join('\\n')}\n\n【下一步】\n1. 在Notion热点库中查看详情\n2. 筛选高质量热点\n3. 转入素材库进行深度分析`;\n\nreturn [{\n  json: {\n    report: summary,\n    successCount,\n    failCount,\n    totalCount: items.length,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "generate-summary",
+      "name": "生成执行摘要",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2450, 300]
+    }
+  ],
+  "connections": {
+    "每6小时执行": {"main": [[{"node": "准备搜索任务", "type": "main", "index": 0}]]},
+    "手动触发": {"main": [[{"node": "准备搜索任务", "type": "main", "index": 0}]]},
+    "准备搜索任务": {"main": [[{"node": "调用搜索API", "type": "main", "index": 0}]]},
+    "调用搜索API": {"main": [[{"node": "提取搜索结果", "type": "main", "index": 0}]]},
+    "提取搜索结果": {"main": [[{"node": "抓取网页内容", "type": "main", "index": 0}]]},
+    "抓取网页内容": {"main": [[{"node": "提取文本内容", "type": "main", "index": 0}]]},
+    "提取文本内容": {"main": [[{"node": "AI分析内容", "type": "main", "index": 0}]]},
+    "AI分析内容": {"main": [[{"node": "整合数据", "type": "main", "index": 0}]]},
+    "整合数据": {"main": [[{"node": "构建Notion请求", "type": "main", "index": 0}]]},
+    "构建Notion请求": {"main": [[{"node": "写入热点库", "type": "main", "index": 0}]]},
+    "写入热点库": {"main": [[{"node": "汇总结果", "type": "main", "index": 0}]]},
+    "汇总结果": {"main": [[{"node": "生成执行摘要", "type": "main", "index": 0}]]}
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

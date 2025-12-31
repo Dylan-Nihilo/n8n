@@ -1,0 +1,170 @@
+{
+  "name": "内容发布-小红书",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/{{$env.NOTION_CONTENT_DB_ID}}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"and\": [\n      {\"property\": \"状态\", \"select\": {\"equals\": \"已审核\"}},\n      {\"property\": \"平台\", \"select\": {\"equals\": \"小红书\"}}\n    ]\n  },\n  \"sorts\": [{\"property\": \"创建时间\", \"direction\": \"ascending\"}],\n  \"page_size\": 5\n}",
+        "options": {"timeout": 10000}
+      },
+      "id": "query-content",
+      "name": "查询待发布内容",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取内容数据\nconst data = $input.first().json;\nconst results = data.results || [];\n\nif (results.length === 0) {\n  throw new Error('没有待发布的小红书内容');\n}\n\nconst items = [];\nfor (const page of results) {\n  const props = page.properties;\n  items.push({\n    json: {\n      pageId: page.id,\n      contentId: props['内容ID']?.rich_text?.[0]?.text?.content || '',\n      title: props['标题']?.title?.[0]?.text?.content || '无标题',\n      content: props['正文']?.rich_text?.[0]?.text?.content || '',\n      tags: props['话题标签']?.multi_select?.map(t => t.name) || [],\n      images: props['配图列表']?.rich_text?.[0]?.text?.content?.split('\\n') || [],\n      platform: '小红书',\n      timestamp: new Date().toISOString()\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "extract-content",
+      "name": "提取内容数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 准备小红书发布数据\nconst d = $json;\n\n// 格式化标签（小红书格式：#标签）\nconst formattedTags = d.tags.map(t => `#${t}`).join(' ');\n\n// 组合完整内容\nconst fullContent = `${d.title}\\n\\n${d.content}\\n\\n${formattedTags}`;\n\nreturn [{\n  json: {\n    ...d,\n    fullContent: fullContent,\n    publishData: {\n      title: d.title,\n      desc: fullContent,\n      type: 'normal',  // 普通笔记\n      post_time: Math.floor(Date.now() / 1000)  // 立即发布\n    }\n  }\n}];"
+      },
+      "id": "prepare-publish",
+      "name": "准备发布数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 注意：小红书官方API需要企业认证\n// 这里提供两种方案：\n// 1. 使用第三方自动化工具（如：小红书自动化插件）\n// 2. 人工发布（生成发布预览）\n\nconst d = $json;\n\n// 方案2：生成发布预览和指导\nconst preview = `【小红书发布预览】\n\n标题：${d.title}\n\n内容：\n${d.fullContent}\n\n配图建议：\n${d.images.map((img, i) => `图${i+1}: ${img}`).join('\\n')}\n\n【人工发布步骤】\n1. 打开小红书APP\n2. 点击"+"创建笔记\n3. 复制上述标题和内容\n4. 上传配图\n5. 发布\n\n【自动化方案】\n如需自动化发布，请配置：\n- 小红书开放平台API（企业认证）\n- 或使用第三方自动化工具\n`;\n\nreturn [{\n  json: {\n    ...d,\n    publishStatus: '待人工发布',\n    publishPreview: preview,\n    publishMethod: '人工发布',\n    // 如果有API，在这里调用\n    // publishResult: await callXiaohongshuAPI(d.publishData)\n  }\n}];"
+      },
+      "id": "publish-xiaohongshu",
+      "name": "发布到小红书",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 整合发布结果\nconst d = $json;\nconst publishId = 'PUB' + Date.now() + Math.random().toString(36).substr(2, 5).toUpperCase();\n\n// 模拟发布链接（实际应该从API返回）\nconst publishUrl = `https://www.xiaohongshu.com/explore/${publishId.toLowerCase()}`;\n\nreturn [{\n  json: {\n    publishId: publishId,\n    title: d.title,\n    platform: '小红书',\n    publishUrl: publishUrl,\n    platformContentId: publishId,  // 实际应该从API返回\n    contentPageId: d.pageId,\n    publishTime: new Date().toISOString(),\n    publishMethod: d.publishMethod,\n    publishStatus: d.publishStatus === '待人工发布' ? '待人工发布' : '成功',\n    publishPreview: d.publishPreview,\n    initialData: '阅读0/点赞0/评论0',\n    createdAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "merge-result",
+      "name": "整合发布结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 构建Notion发布库请求\nconst d = $json;\nconst body = {\n  parent: { database_id: process.env.NOTION_PUBLISH_DB_ID },\n  properties: {\n    '标题': { title: [{ text: { content: d.title.substring(0, 100) } }] },\n    '发布ID': { rich_text: [{ text: { content: d.publishId } }] },\n    '平台': { select: { name: d.platform } },\n    '发布链接': { url: d.publishUrl },\n    '平台内容ID': { rich_text: [{ text: { content: d.platformContentId } }] },\n    '发布时间': { date: { start: d.publishTime } },\n    '发布方式': { select: { name: d.publishMethod } },\n    '发布状态': { select: { name: d.publishStatus } },\n    '初始数据': { rich_text: [{ text: { content: d.initialData } }] }\n  }\n};\nreturn [{ json: { notionBody: JSON.stringify(body), originalData: d } }];"
+      },
+      "id": "build-notion-request",
+      "name": "构建Notion请求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.notionBody }}",
+        "options": {}
+      },
+      "id": "write-publish-db",
+      "name": "写入发布库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1570, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{$('整合发布结果').item.json.contentPageId}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"状态\": {\"select\": {\"name\": \"已发布\"}}\n  }\n}",
+        "options": {}
+      },
+      "id": "update-content-status",
+      "name": "更新内容状态",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData"
+      },
+      "id": "aggregate",
+      "name": "汇总结果",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [2010, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成执行摘要\nconst items = $input.first().json.data || [];\nconst successCount = items.filter(item => item.id).length;\n\nconst summary = `小红书发布报告\n==================\n执行时间: ${new Date().toLocaleString('zh-CN')}\n\n【发布结果】\n- 成功: ${successCount}篇\n- 失败: ${items.length - successCount}篇\n\n【发布列表】\n${items.slice(0, 5).map((item, i) => {\n  const d = item.originalData;\n  return `${i+1}. ${d?.title}\\n   链接: ${d?.publishUrl}\\n   状态: ${d?.publishStatus}`;\n}).join('\\n\\n')}\n\n【人工发布预览】\n${items.filter(item => item.originalData?.publishPreview).map(item => item.originalData.publishPreview).join('\\n---\\n')}\n\n【下一步】\n1. 如果是"待人工发布"，请按照预览手动发布\n2. 发布后更新发布库中的实际链接\n3. 24小时后运行数据监测工作流`;\n\nreturn [{\n  json: {\n    report: summary,\n    successCount,\n    totalCount: items.length,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "generate-summary",
+      "name": "生成执行摘要",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2230, 300]
+    }
+  ],
+  "connections": {
+    "手动触发": {"main": [[{"node": "查询待发布内容", "type": "main", "index": 0}]]},
+    "查询待发布内容": {"main": [[{"node": "提取内容数据", "type": "main", "index": 0}]]},
+    "提取内容数据": {"main": [[{"node": "准备发布数据", "type": "main", "index": 0}]]},
+    "准备发布数据": {"main": [[{"node": "发布到小红书", "type": "main", "index": 0}]]},
+    "发布到小红书": {"main": [[{"node": "整合发布结果", "type": "main", "index": 0}]]},
+    "整合发布结果": {"main": [[{"node": "构建Notion请求", "type": "main", "index": 0}]]},
+    "构建Notion请求": {"main": [[{"node": "写入发布库", "type": "main", "index": 0}]]},
+    "写入发布库": {"main": [[{"node": "更新内容状态", "type": "main", "index": 0}]]},
+    "更新内容状态": {"main": [[{"node": "汇总结果", "type": "main", "index": 0}]]},
+    "汇总结果": {"main": [[{"node": "生成执行摘要", "type": "main", "index": 0}]]}
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

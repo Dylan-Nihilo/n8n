@@ -1,350 +1,197 @@
-# MBTI茶饮营销自动化工作流
+# 营销自动化系统 v2.0
 
-## 📖 项目简介
+> 模块化、通用化、可扩展的营销自动化解决方案
 
-这是一套完整的MBTI主题茶饮品牌营销自动化工作流系统，基于n8n构建，实现从素材采集、内容创作到数据监测的全流程自动化。
+## 🎯 系统特点
 
-**品牌**：原野雾芽  
-**理念**：不被定义，自己定义  
-**产品**：4款MBTI主题茶饮（金桂乌龙、冷萃白桃、茉莉绿茶、红玉红茶）
+- **模块化设计**：每个功能独立，可自由组合
+- **通用化配置**：适配任何产品、任何行业
+- **多平台支持**：n8n、Dify等多种工作流引擎
+- **全流程覆盖**：热点抓取 → 内容创作 → 发布 → 监测 → 优化
+- **数据驱动**：基于Notion的统一数据管理
 
----
+## 📊 系统架构
 
-## 🎯 工作流清单
-
-### 1. mbti-rss-collector.json (V1)
-**功能**：从知乎热榜RSS采集MBTI相关素材
-
-**特点**：
-- 数据源：知乎热榜RSS
-- 过滤：23个MBTI关键词
-- 执行：每12小时
-- 节点：8个
-
-**状态**：✅ 已部署
-
----
-
-### 2. mbti-rss-collector-v2.json (V2)
-**功能**：主动搜索并智能分析MBTI话题
-
-**特点**：
-- 数据源：SerpAPI主动搜索
-- 内容：抓取完整网页正文
-- 分析：AI深度分析（Claude Sonnet 4.5）
-- 过滤：契合度≥6.0
-- 执行：每天9:00
-- 节点：11个
-
-**状态**：✅ 已部署
-
-**工作流程**：
 ```
-触发器 → 搜索MBTI话题 → 提取结果 → 抓取网页 → 
-提取HTML → AI分析 → 整合数据 → 构建请求 → 
-写入Notion → 汇总 → 生成摘要
+配置层 (Config) → 数据层 (Notion) → 工作流层 (n8n/Dify) → 执行层 (Platforms)
 ```
 
----
-
-### 3. mbti-content-creator.json (NEW)
-**功能**：基于素材库和产品库自动生成小红书和公众号内容
-
-**特点**：
-- 输入：素材库（热度≥8） + 产品库
-- 输出：小红书笔记 + 公众号文章
-- AI生成：标题 + 正文 + 标签
-- 执行：周一、三、五 9:00
-- 节点：17个
-
-**状态**：🆕 新增
-
-**工作流程**：
-```
-触发器 → 查询素材库 → 查询产品库 → 选择数据 →
-分支1: AI生成小红书标题 → AI生成小红书正文 → 整合内容 → 写入创作库
-分支2: AI生成公众号标题 → AI生成公众号正文 → 整合内容 → 写入创作库
-→ 汇总结果 → 生成摘要
-```
-
-**输出示例**：
-- 小红书：800-1000字图文笔记 + 标签 + 配图建议
-- 公众号：2000-3000字深度文章
-
----
-
-## 🗂️ Notion数据库结构
-
-### 素材库 (Material Database)
-
-| 字段名 | 类型 | 说明 |
-|-------|------|------|
-| 标题 | Title | 素材标题 |
-| 来源 | Select | 微博/知乎/小红书等 |
-| 原文链接 | URL | 原文地址 |
-| 原文摘要 | Rich Text | 100-500字摘要 |
-| 详细内容 | Rich Text | 完整内容（可选） |
-| 创作角度 | Rich Text | AI生成的5个创作方向 |
-| 热度评分 | Number | 1-10分 |
-| 契合度 | Number | 1-10分 |
-| 话题分类 | Multi-select | MBTI/热点/社交等 |
-| MBTI相关 | Multi-select | MBTI类型标签 |
-| 状态 | Select | 待评估/可用/已使用 |
-| 使用次数 | Number | 被使用的次数 |
-
-### 产品库 (Product Database)
-
-| 字段名 | 类型 | 说明 |
-|-------|------|------|
-| 产品名称 | Title | 茶饮名称 |
-| MBTI类型 | Select | INFP/INTJ/ENFP/ESTJ |
-| 人格特质 | Rich Text | 性格描述 |
-| 核心卖点 | Rich Text | 主要特点 |
-| 适合场景 | Rich Text | 使用场景 |
-| 口味描述 | Rich Text | 味道特点 |
-| 价格 | Number | 售价 |
-| 状态 | Select | 在售/下架 |
-
-### 创作库 (Creation Database)
-
-| 字段名 | 类型 | 说明 |
-|-------|------|------|
-| 标题 | Title | 内容标题 |
-| 平台 | Select | 小红书/公众号 |
-| 内容类型 | Select | 图文笔记/深度文章 |
-| 正文 | Rich Text | 完整内容 |
-| 标签 | Multi-select | 话题标签（小红书） |
-| 配图建议 | Rich Text | 图片说明 |
-| 素材来源 | Rich Text | 关联的素材 |
-| 关联产品 | Rich Text | 推广的产品 |
-| 状态 | Select | 待审核/已审核/已发布 |
-| 创建时间 | Date | 创建日期 |
-| 发布时间 | Date | 发布日期 |
-| 阅读量 | Number | 阅读数 |
-| 点赞数 | Number | 点赞数 |
-| 评论数 | Number | 评论数 |
-
----
-
-## ⚙️ 环境变量配置
-
-在n8n中配置以下环境变量：
-
-```bash
-# Notion配置
-NOTION_API_TOKEN=secret_xxx                          # Notion API密钥
-NOTION_MATERIAL_DATABASE_ID=2d87fa67a9af81b99b07cde5013942b4  # 素材库ID
-NOTION_PRODUCT_DATABASE_ID=xxx                       # 产品库ID
-NOTION_CREATION_DATABASE_ID=xxx                      # 创作库ID
-
-# AI服务配置
-AI_API_BASE_URL=http://localhost:8045                # AI API地址
-AI_MODEL=gpt-4o-mini                                 # AI模型（可选）
-OPENAI_API_KEY=sk-xxx                                # OpenAI API密钥
-
-# 搜索服务配置
-SERPAPI_KEY=xxx                                      # SerpAPI密钥
-
-# 社交媒体配置（未来使用）
-XIAOHONGSHU_API_KEY=xxx                              # 小红书API密钥
-WECHAT_APPID=xxx                                     # 微信公众号AppID
-WECHAT_APPSECRET=xxx                                 # 微信公众号AppSecret
-```
-
-### 获取Notion Database ID
-
-1. 打开Notion数据库页面
-2. 点击右上角"···" → "Copy link"
-3. 链接格式：`https://www.notion.so/xxx?v=yyy`
-4. `xxx`部分就是Database ID（去掉中间的`-`）
-
----
+详见：[ARCHITECTURE.md](ARCHITECTURE.md)
 
 ## 🚀 快速开始
 
-### 1. 准备Notion数据库
+### 1. 环境准备
 
-创建3个数据库，按照上述结构添加字段：
-- 素材库
-- 产品库
-- 创作库
+**必需服务**：
+- n8n (工作流引擎)
+- Notion (数据管理)
+- OpenAI API (AI生成)
+- SerpAPI (搜索数据)
 
-### 2. 配置环境变量
+**可选服务**：
+- Dify (AI增强)
+- 各平台API (自动发布)
 
-在n8n的Settings → Environment Variables中添加所有必需的环境变量。
+### 2. 配置Notion数据库
 
-### 3. 导入工作流
+按照 `notion/SCHEMA.md` 创建7个数据库：
+1. 热点库 (Hotspot DB)
+2. 素材库 (Material DB)
+3. 产品库 (Product DB)
+4. 内容库 (Content DB)
+5. 发布库 (Publish DB)
+6. 数据库 (Analytics DB)
+7. 策略库 (Strategy DB)
 
-1. 在n8n中点击"Import from File"
-2. 选择工作流JSON文件
-3. 依次导入：
-   - mbti-rss-collector-v2.json
-   - mbti-content-creator.json
+### 3. 配置环境变量
 
-### 4. 测试运行
-
-1. 先运行`mbti-rss-collector-v2`，采集素材
-2. 在素材库中将状态改为"可用"
-3. 在产品库中添加4款产品
-4. 运行`mbti-content-creator`，生成内容
-5. 在创作库中审核内容
-
-### 5. 启用定时任务
-
-在每个工作流中启用"Active"开关，工作流将按计划自动执行。
-
----
-
-## 📅 执行时间表
-
-| 工作流 | 执行时间 | 频率 | 说明 |
-|-------|---------|------|------|
-| mbti-rss-collector-v2 | 每天9:00 | 每天 | 素材采集 |
-| mbti-content-creator | 周一三五 9:00 | 每周3次 | 内容创作 |
-
-**建议时间线（周一）**：
-```
-09:00 - 素材采集 → 新增5条素材
-09:30 - 内容创作 → 生成2篇内容
-10:00 - 人工审核 → 修改优化
-11:00 - 手动发布 → 发布到平台
+复制配置模板：
+```bash
+cp config/examples/mbti-tea.env .env
 ```
 
----
+编辑 `.env` 填入你的API密钥和数据库ID。
 
-## 🎨 内容创作策略
+### 4. 导入n8n工作流
 
-### 小红书内容
+在n8n中依次导入：
+- `n8n/modules/01-trend-capture/trend-search.json`
+- `n8n/modules/02-content-creation/content-generate-ai.json`
+- `n8n/modules/03-content-publishing/publish-xiaohongshu.json`
+- `n8n/modules/04-data-monitoring/monitor-metrics.json`
 
-**结构**：
-- 开头引入：100字，吸引眼球
-- MBTI知识：400字，提供价值
-- 产品植入：300字，自然过渡
-- 结尾互动：100字，引导评论
+### 5. 测试运行
 
-**风格**：
-- 轻松活泼
-- 使用emoji
-- 真实可信
-- 避免硬广
+手动触发每个工作流，检查是否正常运行。
 
-**禁忌词**：绝对、必买、最好、第一、保证、神器
+## 📦 模块说明
 
-### 公众号内容
+### 核心模块 (MVP)
 
-**结构**：
-- 引言：200字，提出问题
-- 4-5个小节：各400字，深度分析
-- 产品介绍：300字，自然植入
-- 结尾：200字，情感共鸣
+| 模块 | 功能 | 文件 |
+|-----|------|------|
+| 热点抓取 | 搜索引擎热点 | `01-trend-capture/trend-search.json` |
+| 内容创作 | AI生成内容 | `02-content-creation/content-generate-ai.json` |
+| 内容发布 | 小红书发布 | `03-content-publishing/publish-xiaohongshu.json` |
+| 数据监测 | 基础指标 | `04-data-monitoring/monitor-metrics.json` |
 
-**风格**：
-- 深度有料
-- 情感共鸣
-- 提供洞察
-- 品牌理念
+### 扩展模块 (待开发)
 
----
+- RSS订阅、社交媒体监控
+- 模板生成、人工审核
+- 公众号、抖音、知乎发布
+- 评论回复、私信处理
+- A/B测试、策略优化
+
+## 🔧 配置说明
+
+### 通用配置
+
+所有配置通过环境变量管理，支持：
+- AI服务配置
+- Notion数据库ID
+- 搜索关键词
+- 目标平台
+- 发布策略
+
+### 产品配置
+
+在Notion产品库中配置：
+- 产品名称、标签
+- 核心卖点
+- 使用场景
+- 植入策略
+
+### 策略配置
+
+在环境变量中配置：
+- 内容比例（教育/情感/促销）
+- 发布时间
+- 监测频率
+
+## 📖 文档
+
+- [系统架构](ARCHITECTURE.md) - 完整的架构设计
+- [Notion结构](notion/SCHEMA.md) - 数据库设计
+- [部署指南](DEPLOYMENT.md) - 详细部署步骤
+- [配置指南](CONFIGURATION.md) - 配置说明
+- [最佳实践](docs/best-practices.md) - 使用建议
+
+## 🎯 使用场景
+
+### 场景1：MBTI茶饮营销
+
+```
+热点抓取(MBTI话题) → AI生成(结合产品) → 小红书发布 → 数据监测
+```
+
+配置：`config/examples/mbti-tea.env`
+
+### 场景2：时尚品牌营销
+
+```
+热点抓取(时尚话题) → AI生成(穿搭建议) → 多平台发布 → 数据分析
+```
+
+配置：自定义关键词和产品
+
+### 场景3：SaaS产品营销
+
+```
+行业热点 → 解决方案内容 → 知乎/公众号 → 转化追踪
+```
+
+配置：B2B策略
+
+## 🔄 工作流组合
+
+### 全自动流程
+
+```
+trend-search (定时) → content-generate-ai (定时) 
+→ publish-xiaohongshu (定时) → monitor-metrics (定时)
+```
+
+### 半自动流程
+
+```
+trend-search (定时) → 人工筛选 → content-generate-ai (手动)
+→ 人工审核 → publish-xiaohongshu (手动) → monitor-metrics (定时)
+```
 
 ## 📊 预期效果
 
-### 第1个月
-- 素材库：150条
-- 创作库：24篇（12小红书 + 12公众号）
-- 发布量：20篇（审核通过率80%+）
+**第1个月**：
+- 自动采集150条热点
+- 生成24篇内容
+- 节省80%时间
 
-### 第3个月
-- 素材库：450条
-- 创作库：72篇
-- 发布量：60篇
+**第3个月**：
+- 素材库450条
+- 内容库72篇
+- 建立稳定节奏
 
-### 第6个月
-- 素材库：900条
-- 创作库：144篇
-- 发布量：120篇
-- 粉丝：3000+
-
----
-
-## 🔧 故障排查
-
-### 问题1：AI生成失败
-
-**可能原因**：
-- AI API地址错误
-- API密钥无效
-- 模型名称错误
-- 网络超时
-
-**解决方案**：
-1. 检查`AI_API_BASE_URL`是否正确
-2. 确认`OPENAI_API_KEY`有效
-3. 尝试更换模型（gpt-4o-mini）
-4. 增加超时时间（60秒）
-
-### 问题2：Notion写入失败
-
-**可能原因**：
-- Database ID错误
-- API Token无效
-- 字段名称不匹配
-- 数据格式错误
-
-**解决方案**：
-1. 确认Database ID正确（32位，无`-`）
-2. 检查Notion API Token权限
-3. 确保数据库字段名称完全一致
-4. 查看n8n执行日志的详细错误
-
-### 问题3：素材库为空
-
-**可能原因**：
-- 搜索结果为空
-- 过滤条件太严格
-- 网页抓取失败
-
-**解决方案**：
-1. 手动运行`mbti-rss-collector-v2`
-2. 降低契合度阈值（从6.0降到5.0）
-3. 检查SerpAPI密钥和额度
-4. 查看执行日志
-
----
-
-## 📚 相关文档
-
-- [COLLABORATION_GUIDE.md](./COLLABORATION_GUIDE.md) - Manus与Claude Code协同指南
-- [CHANGELOG.md](./CHANGELOG.md) - 版本变更记录
-- [optimization_plan.md](./optimization_plan.md) - 优化方案详解
-- [workflow_analysis.md](./workflow_analysis.md) - 工作流分析
-
----
+**第6个月**：
+- 素材库900条
+- 内容库144篇
+- 粉丝增长3000+
 
 ## 🤝 贡献
 
-本项目由Manus AI设计，与Claude Code协同开发。
+欢迎提交Issue和Pull Request！
 
-**工作流设计**：Manus  
-**本地部署**：Claude Code  
-**内容审核**：人工  
+## 📄 许可
 
----
+MIT License
 
 ## 📞 支持
 
-如有问题，请：
-1. 查看故障排查部分
-2. 查看n8n执行日志
-3. 查看COLLABORATION_GUIDE.md
-4. 联系技术支持
+- 文档：查看 `docs/` 目录
+- 问题：提交 GitHub Issue
+- 讨论：GitHub Discussions
 
 ---
 
-## 📝 许可
-
-本项目仅供学习和个人使用。
-
----
-
-**最后更新**：2025-12-31  
-**版本**：v1.0
+**版本**: v2.0  
+**更新**: 2025-12-31  
+**作者**: Manus AI
