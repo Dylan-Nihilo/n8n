@@ -1,0 +1,23 @@
+# Notion数据库ID记录
+# 创建时间: 2025-12-31
+
+## 已有数据库
+品牌中心: collection://2d87fa67-a9af-81b7-a6b4-000bf393eadd
+产品库: collection://2d87fa67-a9af-81b2-bba9-000b8b5a9835
+素材库: collection://2d87fa67-a9af-8173-8337-000b5069249b
+创作库: collection://2d87fa67-a9af-81bc-a3b4-000be6f79508
+发布日历: collection://2d87fa67-a9af-816a-a3fd-000b66d8bdfc
+话题轮盘: collection://2d87fa67-a9af-81af-9a62-000bae0537bb
+
+## 新创建数据库
+热点库: collection://ae70a049-13dc-43fa-a626-c4967dc693ce
+发布库: collection://86a9eaf4-8507-4d2d-b2b7-fe10bfbd5571
+数据库: collection://e20dae53-8585-4c59-b88c-a12d8461e6e3
+
+## 环境变量配置
+NOTION_HOTSPOT_DB_ID=ae70a049-13dc-43fa-a626-c4967dc693ce
+NOTION_MATERIAL_DB_ID=2d87fa67-a9af-8173-8337-000b5069249b
+NOTION_PRODUCT_DB_ID=2d87fa67-a9af-81b2-bba9-000b8b5a9835
+NOTION_CONTENT_DB_ID=2d87fa67-a9af-81bc-a3b4-000be6f79508
+NOTION_PUBLISH_DB_ID=86a9eaf4-8507-4d2d-b2b7-fe10bfbd5571
+NOTION_ANALYTICS_DB_ID=e20dae53-8585-4c59-b88c-a12d8461e6e3

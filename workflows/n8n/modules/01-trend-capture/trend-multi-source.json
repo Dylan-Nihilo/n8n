@@ -1,0 +1,298 @@
+{
+  "name": "热点抓取-多源聚合",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "cronExpression", "expression": "0 */6 * * *"}]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "每6小时执行",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 准备多源抓取任务\nconst sources = [\n  {\n    name: '微博热搜',\n    url: 'https://weibo.com/ajax/side/hotSearch',\n    type: 'api',\n    method: 'GET'\n  },\n  {\n    name: '小红书热榜',\n    url: 'https://www.xiaohongshu.com/web-api/sns/v1/search/hot_list',\n    type: 'api',\n    method: 'GET'\n  },\n  {\n    name: '知乎热榜',\n    url: 'https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total',\n    type: 'api',\n    method: 'GET'\n  },\n  {\n    name: 'Google搜索',\n    url: 'serpapi',\n    type: 'search',\n    keywords: (process.env.TREND_KEYWORDS || 'MBTI').split(',')\n  },\n  {\n    name: '百度搜索',\n    url: 'serpapi',\n    type: 'search',\n    keywords: (process.env.TREND_KEYWORDS || 'MBTI').split(',')\n  }\n];\n\nreturn sources.map(source => ({\n  json: source\n}));"
+      },
+      "id": "prepare-sources",
+      "name": "准备多源任务",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [250, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成随机User-Agent\nconst userAgents = [\n  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',\n  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',\n  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',\n  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',\n  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'\n];\n\nconst d = $json;\nconst randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];\n\n// 添加反爬虫headers\nd.headers = {\n  'User-Agent': randomUA,\n  'Accept': 'application/json, text/plain, */*',\n  'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',\n  'Referer': d.url.includes('weibo') ? 'https://weibo.com/' : \n            d.url.includes('xiaohongshu') ? 'https://www.xiaohongshu.com/' :\n            d.url.includes('zhihu') ? 'https://www.zhihu.com/' : '',\n  'Cache-Control': 'no-cache'\n};\n\n// 添加随机延迟（100-500ms）\nd.delay = Math.floor(Math.random() * 400) + 100;\n\nreturn [{ json: d }];"
+      },
+      "id": "add-anti-scraping",
+      "name": "添加反爬处理",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.type}}",
+              "operation": "equals",
+              "value2": "api"
+            }
+          ]
+        }
+      },
+      "id": "route-by-type",
+      "name": "按类型路由",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 400]
+    },
+    {
+      "parameters": {
+        "method": "={{$json.method}}",
+        "url": "={{$json.url}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": "={{Object.entries($json.headers).map(([name, value]) => ({name, value}))}}"
+        },
+        "options": {
+          "timeout": 15000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": true,
+              "maxRedirects": 3
+            }
+          }
+        }
+      },
+      "id": "fetch-api-data",
+      "name": "抓取API数据",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 解析微博热搜数据\nconst d = $json;\nconst sourceName = $('添加反爬处理').item.json.name;\n\nif (!d.data || !d.data.realtime) {\n  throw new Error('微博热搜数据格式错误');\n}\n\nconst items = [];\nconst hotList = d.data.realtime.slice(0, 20); // 取前20条\n\nfor (const item of hotList) {\n  items.push({\n    json: {\n      title: item.word || item.note,\n      source: sourceName,\n      url: `https://s.weibo.com/weibo?q=${encodeURIComponent(item.word || item.note)}`,\n      hotValue: parseInt(item.num) || 0,\n      rank: item.rank || 0,\n      category: item.category || '',\n      rawData: JSON.stringify(item)\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "parse-weibo",
+      "name": "解析微博数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 解析小红书热榜数据\nconst d = $json;\nconst sourceName = $('添加反爬处理').item.json.name;\n\nif (!d.data || !d.data.items) {\n  throw new Error('小红书热榜数据格式错误');\n}\n\nconst items = [];\nconst hotList = d.data.items.slice(0, 20);\n\nfor (const item of hotList) {\n  items.push({\n    json: {\n      title: item.title || item.query,\n      source: sourceName,\n      url: `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(item.query)}`,\n      hotValue: parseInt(item.hot_value) || 0,\n      rank: item.rank || 0,\n      rawData: JSON.stringify(item)\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "parse-xiaohongshu",
+      "name": "解析小红书数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 解析知乎热榜数据\nconst d = $json;\nconst sourceName = $('添加反爬处理').item.json.name;\n\nif (!d.data) {\n  throw new Error('知乎热榜数据格式错误');\n}\n\nconst items = [];\nconst hotList = d.data.slice(0, 20);\n\nfor (const item of hotList) {\n  const target = item.target;\n  items.push({\n    json: {\n      title: target.title || target.question?.title,\n      source: sourceName,\n      url: `https://www.zhihu.com/question/${target.id}`,\n      hotValue: parseInt(item.detail_text?.replace(/[^0-9]/g, '')) || 0,\n      rank: items.length + 1,\n      excerpt: target.excerpt || '',\n      rawData: JSON.stringify(item)\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "parse-zhihu",
+      "name": "解析知乎数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://serpapi.com/search.json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "api_key", "value": "={{$env.SERPAPI_KEY}}"},
+            {"name": "engine", "value": "={{$('添加反爬处理').item.json.name === 'Google搜索' ? 'google' : 'baidu'}}"},
+            {"name": "q", "value": "={{$('添加反爬处理').item.json.keywords.join(' ')}}"},
+            {"name": "location", "value": "China"},
+            {"name": "hl", "value": "zh-cn"},
+            {"name": "gl", "value": "cn"},
+            {"name": "num", "value": "10"}
+          ]
+        },
+        "options": {"timeout": 15000}
+      },
+      "id": "fetch-search-data",
+      "name": "搜索引擎查询",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 解析搜索结果\nconst d = $json;\nconst sourceName = $('添加反爬处理').item.json.name;\n\nconst items = [];\nconst results = d.organic_results || [];\n\nfor (let i = 0; i < results.length; i++) {\n  const result = results[i];\n  items.push({\n    json: {\n      title: result.title,\n      source: sourceName,\n      url: result.link,\n      hotValue: (10 - i) * 10, // 基于排名计算热度\n      rank: i + 1,\n      excerpt: result.snippet || '',\n      rawData: JSON.stringify(result)\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "parse-search",
+      "name": "解析搜索数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition"
+      },
+      "id": "merge-all",
+      "name": "合并所有数据",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1350, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// AI分析热点内容\nconst d = $json;\n\nconst prompt = `分析以下热点话题，提供结构化信息：\n\n标题：${d.title}\n摘要：${d.excerpt || '无'}\n来源：${d.source}\n\n请提供：\n1. 200字内的摘要\n2. 3-5个关键词（逗号分隔）\n3. 分类（从：MBTI、心理学、生活方式、职场、恋爱 中选一个）\n4. 受众群体（3个以内，逗号分隔）\n5. 情感倾向（正面/中性/负面）\n\n以JSON格式返回：\n{\n  \"summary\": \"摘要\",\n  \"keywords\": [\"关键词1\", \"关键词2\"],\n  \"category\": \"分类\",\n  \"audience\": [\"受众1\", \"受众2\"],\n  \"sentiment\": \"情感倾向\"\n}`;\n\nreturn [{\n  json: {\n    ...d,\n    aiPrompt: prompt\n  }\n}];"
+      },
+      "id": "prepare-ai-analysis",
+      "name": "准备AI分析",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_API_BASE_URL || 'https://api.anthropic.com'}}/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "x-api-key", "value": "={{$env.ANTHROPIC_API_KEY}}"},
+            {"name": "anthropic-version", "value": "2023-06-01"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL || 'claude-3-5-sonnet-20241022'}}\",\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"{{$json.aiPrompt}}\"\n    }\n  ]\n}",
+        "options": {"timeout": 30000}
+      },
+      "id": "ai-analyze",
+      "name": "AI分析",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 整合AI分析结果\nconst d = $('准备AI分析').item.json;\nconst aiResponse = $json;\n\nlet analysis = {};\ntry {\n  const content = aiResponse.content?.[0]?.text || '{}';\n  analysis = JSON.parse(content);\n} catch (e) {\n  // AI返回格式错误，使用默认值\n  analysis = {\n    summary: d.excerpt || d.title,\n    keywords: [],\n    category: 'MBTI',\n    audience: [],\n    sentiment: '中性'\n  };\n}\n\nreturn [{\n  json: {\n    title: d.title,\n    source: d.source,\n    url: d.url,\n    summary: analysis.summary,\n    hotValue: d.hotValue,\n    keywords: analysis.keywords,\n    category: analysis.category,\n    audience: analysis.audience,\n    sentiment: analysis.sentiment,\n    discoveredAt: new Date().toISOString(),\n    fullContent: d.rawData\n  }\n}];"
+      },
+      "id": "merge-analysis",
+      "name": "整合分析结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 构建Notion请求\nconst d = $json;\nconst body = {\n  parent: { database_id: process.env.NOTION_HOTSPOT_DB_ID },\n  properties: {\n    '标题': { title: [{ text: { content: d.title.substring(0, 100) } }] },\n    '来源': { select: { name: d.source } },\n    'URL': { url: d.url },\n    '摘要': { rich_text: [{ text: { content: d.summary.substring(0, 2000) } }] },\n    '热度值': { number: d.hotValue },\n    '关键词': { multi_select: d.keywords.map(k => ({ name: k })) },\n    '分类': { select: { name: d.category } },\n    '受众': { multi_select: d.audience.map(a => ({ name: a })) },\n    '情感倾向': { select: { name: d.sentiment } },\n    '状态': { select: { name: '待筛选' } },\n    '发现时间': { date: { start: d.discoveredAt } },\n    '完整内容': { rich_text: [{ text: { content: d.fullContent.substring(0, 2000) } }] }\n  }\n};\nreturn [{ json: { notionBody: JSON.stringify(body), originalData: d } }];"
+      },
+      "id": "build-notion-request",
+      "name": "构建Notion请求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2230, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.notionBody }}",
+        "options": {}
+      },
+      "id": "write-to-notion",
+      "name": "写入Notion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2450, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData"
+      },
+      "id": "aggregate",
+      "name": "汇总结果",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [2670, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成执行摘要\nconst items = $input.first().json.data || [];\nconst successCount = items.filter(item => item.id).length;\n\n// 按来源统计\nconst bySource = {};\nitems.forEach(item => {\n  const source = item.originalData?.source || '未知';\n  bySource[source] = (bySource[source] || 0) + 1;\n});\n\n// 按分类统计\nconst byCategory = {};\nitems.forEach(item => {\n  const category = item.originalData?.category || '未知';\n  byCategory[category] = (byCategory[category] || 0) + 1;\n});\n\n// TOP热点\nconst topItems = items\n  .filter(item => item.originalData)\n  .sort((a, b) => (b.originalData.hotValue || 0) - (a.originalData.hotValue || 0))\n  .slice(0, 10);\n\nconst summary = `热点抓取报告\n==================\n执行时间: ${new Date().toLocaleString('zh-CN')}\n\n【抓取结果】\n- 成功: ${successCount}条\n- 失败: ${items.length - successCount}条\n\n【来源分布】\n${Object.entries(bySource).map(([k, v]) => `- ${k}: ${v}条`).join('\\n')}\n\n【分类分布】\n${Object.entries(byCategory).map(([k, v]) => `- ${k}: ${v}条`).join('\\n')}\n\n【TOP10热点】\n${topItems.map((item, i) => {\n  const d = item.originalData;\n  return `${i+1}. [${d.source}] ${d.title}\\n   热度:${d.hotValue} 分类:${d.category}`;\n}).join('\\n\\n')}\n\n【下一步】\n1. 在Notion热点库中筛选优质热点\n2. 将已筛选热点标记为"已筛选"\n3. 手动复制到素材库进行深度整理`;\n\nreturn [{\n  json: {\n    report: summary,\n    successCount,\n    totalCount: items.length,\n    bySource,\n    byCategory,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "generate-summary",
+      "name": "生成执行摘要",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2890, 400]
+    }
+  ],
+  "connections": {
+    "每6小时执行": {"main": [[{"node": "准备多源任务", "type": "main", "index": 0}]]},
+    "手动触发": {"main": [[{"node": "准备多源任务", "type": "main", "index": 0}]]},
+    "准备多源任务": {"main": [[{"node": "添加反爬处理", "type": "main", "index": 0}]]},
+    "添加反爬处理": {"main": [[{"node": "按类型路由", "type": "main", "index": 0}]]},
+    "按类型路由": {
+      "main": [
+        [{"node": "抓取API数据", "type": "main", "index": 0}],
+        [{"node": "搜索引擎查询", "type": "main", "index": 0}]
+      ]
+    },
+    "抓取API数据": {"main": [[
+      {"node": "解析微博数据", "type": "main", "index": 0},
+      {"node": "解析小红书数据", "type": "main", "index": 0},
+      {"node": "解析知乎数据", "type": "main", "index": 0}
+    ]]},
+    "搜索引擎查询": {"main": [[{"node": "解析搜索数据", "type": "main", "index": 0}]]},
+    "解析微博数据": {"main": [[{"node": "合并所有数据", "type": "main", "index": 0}]]},
+    "解析小红书数据": {"main": [[{"node": "合并所有数据", "type": "main", "index": 0}]]},
+    "解析知乎数据": {"main": [[{"node": "合并所有数据", "type": "main", "index": 0}]]},
+    "解析搜索数据": {"main": [[{"node": "合并所有数据", "type": "main", "index": 0}]]},
+    "合并所有数据": {"main": [[{"node": "准备AI分析", "type": "main", "index": 0}]]},
+    "准备AI分析": {"main": [[{"node": "AI分析", "type": "main", "index": 0}]]},
+    "AI分析": {"main": [[{"node": "整合分析结果", "type": "main", "index": 0}]]},
+    "整合分析结果": {"main": [[{"node": "构建Notion请求", "type": "main", "index": 0}]]},
+    "构建Notion请求": {"main": [[{"node": "写入Notion", "type": "main", "index": 0}]]},
+    "写入Notion": {"main": [[{"node": "汇总结果", "type": "main", "index": 0}]]},
+    "汇总结果": {"main": [[{"node": "生成执行摘要", "type": "main", "index": 0}]]}
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
