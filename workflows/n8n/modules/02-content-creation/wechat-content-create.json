@@ -1,0 +1,346 @@
+{
+  "name": "公众号-内容创作",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "cronExpression", "expression": "0 10 * * 2,4"}]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "周二四10点执行",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 400]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/{{$env.NOTION_MATERIAL_DB_ID}}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"and\": [\n      {\"property\": \"契合度评分\", \"number\": {\"greater_than_or_equal_to\": 8}},\n      {\"property\": \"状态\", \"select\": {\"equals\": \"可用\"}}\n    ]\n  },\n  \"sorts\": [{\"property\": \"热度评分\", \"direction\": \"descending\"}],\n  \"page_size\": 10\n}",
+        "options": {}
+      },
+      "id": "query-materials",
+      "name": "查询素材库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/{{$env.NOTION_PRODUCT_DB_ID}}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\"property\": \"状态\", \"select\": {\"equals\": \"在售\"}},\n  \"page_size\": 10\n}",
+        "options": {}
+      },
+      "id": "query-products",
+      "name": "查询产品库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 智能选择素材和产品（公众号标准更高）\nconst materials = $('查询素材库').first().json.results || [];\nconst products = $('查询产品库').first().json.results || [];\n\nif (materials.length === 0) {\n  throw new Error('素材库为空，请先添加素材');\n}\nif (products.length === 0) {\n  throw new Error('产品库为空，请先添加产品');\n}\n\n// 随机选择1条素材（公众号要求更高质量）\nconst material = materials[Math.floor(Math.random() * materials.length)];\nconst materialProps = material.properties;\n\n// 根据素材的MBTI标签匹配产品\nconst materialMBTI = materialProps['MBTI相关']?.multi_select?.map(t => t.name) || [];\nlet matchedProducts = products.filter(p => {\n  const productMBTI = p.properties['适配MBTI']?.multi_select?.map(t => t.name) || [];\n  return materialMBTI.some(m => productMBTI.includes(m));\n});\n\nif (matchedProducts.length === 0) {\n  matchedProducts = products;\n}\n\n// 公众号可以推荐更多产品（2-3款）\nconst selectedProducts = matchedProducts\n  .sort(() => Math.random() - 0.5)\n  .slice(0, Math.floor(Math.random() * 2) + 2); // 2-3款\n\nreturn [{\n  json: {\n    platform: '微信公众号',\n    material: {\n      id: material.id,\n      title: materialProps['标题']?.title?.[0]?.text?.content || '',\n      summary: materialProps['原文摘要']?.rich_text?.[0]?.text?.content || '',\n      content: materialProps['详细内容']?.rich_text?.[0]?.text?.content || '',\n      keywords: materialProps['话题分类']?.multi_select?.map(t => t.name) || [],\n      mbtiTags: materialMBTI\n    },\n    products: selectedProducts.map(p => ({\n      id: p.id,\n      name: p.properties['产品名称']?.title?.[0]?.text?.content || '',\n      tags: p.properties['产品标签']?.multi_select?.map(t => t.name) || [],\n      sellingPoints: p.properties['核心卖点']?.rich_text?.[0]?.text?.content || '',\n      scenarios: p.properties['使用场景']?.rich_text?.[0]?.text?.content || '',\n      mbti: p.properties['适配MBTI']?.multi_select?.map(t => t.name) || []\n    }))\n  }\n}];"
+      },
+      "id": "select-data",
+      "name": "智能选择数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成公众号标题Prompt\nconst d = $json;\nconst material = d.material;\nconst products = d.products;\n\nconst prompt = `你是微信公众号专业内容创作者。\n\n任务：为以下素材生成专业有深度的公众号标题。\n\n素材信息：\n- 标题：${material.title}\n- 摘要：${material.summary}\n- 关键词：${material.keywords.join('、')}\n\n产品信息：\n${products.map(p => `- ${p.name}：${p.sellingPoints}`).join('\\n')}\n\n公众号标题要求：\n1. 字数：10-30字\n2. 风格：专业、有深度、有洞察\n3. 可以使用emoji（0-1个，可选）\n4. 包含价值点（知识/观点/方法论）\n5. 自然植入产品关键词（不要硬广）\n6. 避免标题党和夸张\n7. 使用公众号常见句式：\n   - \"关于XX，你需要知道的N件事\"\n   - \"XX背后的真相\"\n   - \"深度解析：XX\"\n   - \"为什么XX？\"\n\n直接返回标题文本，不要解释。`;\n\nreturn [{ json: { ...d, titlePrompt: prompt } }];"
+      },
+      "id": "generate-title-prompt",
+      "name": "生成标题Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_API_BASE_URL || 'https://api.anthropic.com'}}/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "x-api-key", "value": "={{$env.ANTHROPIC_API_KEY}}"},
+            {"name": "anthropic-version", "value": "2023-06-01"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL || 'claude-3-5-sonnet-20241022'}}\",\n  \"max_tokens\": 256,\n  \"messages\": [{\"role\": \"user\", \"content\": \"{{$json.titlePrompt}}\"}]\n}",
+        "options": {}
+      },
+      "id": "ai-generate-title",
+      "name": "AI生成标题",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取标题\nconst d = $('生成标题Prompt').item.json;\nconst aiResponse = $json;\n\nlet title = d.material.title;\ntry {\n  title = aiResponse.content?.[0]?.text?.trim() || title;\n} catch (e) {}\n\nreturn [{ json: { ...d, generatedTitle: title } }];"
+      },
+      "id": "extract-title",
+      "name": "提取标题",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成公众号正文Prompt\nconst d = $json;\nconst material = d.material;\nconst products = d.products;\n\nconst prompt = `你是微信公众号专业内容创作者。\n\n任务：创作一篇深度公众号文章。\n\n标题：${d.generatedTitle}\n\n素材信息：\n- 核心内容：${material.content}\n- 关键词：${material.keywords.join('、')}\n- MBTI标签：${material.mbtiTags.join('、')}\n\n产品信息：\n${products.map(p => `\n产品：${p.name}\n卖点：${p.sellingPoints}\n场景：${p.scenarios}\nMBTI：${p.mbti.join('、')}\n`).join('\\n')}\n\n品牌理念：不被定义，自己定义\n\n公众号正文要求：\n1. 字数：2000-3000字\n2. 结构：\n   - 引言（200字）：引入话题，抛出问题\n   - 深度分析（1200字）：MBTI知识深度解析，多角度分析\n   - 实践建议（400字）：可操作的方法论\n   - 产品推荐（200字）：自然植入产品\n   - 总结（200字）：升华主题，呼应开头\n3. 内容比例：70%教育价值 + 20%观点洞察 + 10%产品植入\n4. 产品植入方式：场景化、自然、作为解决方案\n5. 语言风格：\n   - 专业、有深度、有洞察\n   - 逻辑清晰、论证充分\n   - 适当使用数据和案例\n   - 每段3-5句，段落间有小标题\n6. 互动元素：\n   - 结尾提问引导留言\n   - 引导关注公众号\n   - 引导分享转发\n7. 禁忌词：避免绝对化、夸张、标题党\n\n直接返回正文内容（Markdown格式，包含小标题），不要解释。`;\n\nreturn [{ json: { ...d, contentPrompt: prompt } }];"
+      },
+      "id": "generate-content-prompt",
+      "name": "生成正文Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_API_BASE_URL || 'https://api.anthropic.com'}}/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "x-api-key", "value": "={{$env.ANTHROPIC_API_KEY}}"},
+            {"name": "anthropic-version", "value": "2023-06-01"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL || 'claude-3-5-sonnet-20241022'}}\",\n  \"max_tokens\": 4096,\n  \"messages\": [{\"role\": \"user\", \"content\": \"{{$json.contentPrompt}}\"}]\n}",
+        "options": {}
+      },
+      "id": "ai-generate-content",
+      "name": "AI生成正文",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取正文\nconst d = $('生成正文Prompt').item.json;\nconst aiResponse = $json;\n\nlet content = d.material.content;\ntry {\n  content = aiResponse.content?.[0]?.text?.trim() || content;\n} catch (e) {}\n\nreturn [{ json: { ...d, generatedContent: content } }];"
+      },
+      "id": "extract-content",
+      "name": "提取正文",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成公众号配图Prompt\nconst d = $json;\n\nconst prompt = `基于以下公众号文章，生成3张配图的描述：\n\n标题：${d.generatedTitle}\n\n内容摘要：${d.material.summary}\n\n产品：${d.products.map(p => p.name).join('、')}\n\n要求：\n1. 每张图片用一句话描述（中文）\n2. 风格：专业、简洁、有质感、商务风\n3. 配图类型：\n   - 封面图（1张）：体现主题，专业大气\n   - 内容配图（1张）：知识图表或场景图\n   - 产品图（1张）：产品展示，场景化\n4. 适合公众号平台\n5. 色调：简洁、专业、高级感\n\n返回JSON数组格式：\n[\"图片1描述\", \"图片2描述\", \"图片3描述\"]`;\n\nreturn [{ json: { ...d, imagePrompt: prompt } }];"
+      },
+      "id": "generate-image-prompt",
+      "name": "生成配图Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2230, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.AI_API_BASE_URL || 'https://api.anthropic.com'}}/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "x-api-key", "value": "={{$env.ANTHROPIC_API_KEY}}"},
+            {"name": "anthropic-version", "value": "2023-06-01"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{$env.AI_MODEL || 'claude-3-5-sonnet-20241022'}}\",\n  \"max_tokens\": 512,\n  \"messages\": [{\"role\": \"user\", \"content\": \"{{$json.imagePrompt}}\"}]\n}",
+        "options": {}
+      },
+      "id": "ai-generate-image-desc",
+      "name": "AI生成配图描述",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2450, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 解析配图描述\nconst d = $('生成配图Prompt').item.json;\nconst aiResponse = $json;\n\nlet imageDescriptions = [];\ntry {\n  const content = aiResponse.content?.[0]?.text?.trim() || '[]';\n  imageDescriptions = JSON.parse(content);\n} catch (e) {\n  // 解析失败，生成默认描述\n  imageDescriptions = [\n    `${d.products[0]?.name || '产品'}封面图`,\n    `${d.products[0]?.name || '产品'}内容配图`,\n    `${d.products[0]?.name || '产品'}产品图`\n  ];\n}\n\n// 确保有3张图\nwhile (imageDescriptions.length < 3) {\n  imageDescriptions.push(`${d.products[0]?.name || '产品'}补充配图${imageDescriptions.length+1}`);\n}\n\nreturn [{ json: { ...d, imageDescriptions: imageDescriptions.slice(0, 3) } }];"
+      },
+      "id": "parse-image-desc",
+      "name": "解析配图描述",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2670, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 准备图片生成任务\nconst d = $json;\nconst descriptions = d.imageDescriptions;\n\nconst tasks = descriptions.map((desc, index) => ({\n  json: {\n    ...d,\n    currentImageIndex: index,\n    currentImageDesc: desc,\n    imagePrompt: `${desc}, high quality, professional, clean, minimalist, business style`\n  }\n}));\n\nreturn tasks;"
+      },
+      "id": "prepare-image-gen",
+      "name": "准备图片生成",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2890, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.manus.app/v1/images/generations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.MANUS_API_KEY}}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"nano-banana\",\n  \"prompt\": \"{{$json.imagePrompt}}\",\n  \"n\": 1,\n  \"size\": \"1024x1024\"\n}",
+        "options": {"timeout": 60000}
+      },
+      "id": "nano-banana-generate",
+      "name": "Nano Banana生成图片",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3110, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取图片URL\nconst d = $('准备图片生成').item.json;\nconst response = $json;\n\nlet imageUrl = '';\ntry {\n  imageUrl = response.data?.[0]?.url || '';\n} catch (e) {}\n\nreturn [{\n  json: {\n    index: d.currentImageIndex,\n    description: d.currentImageDesc,\n    url: imageUrl\n  }\n}];"
+      },
+      "id": "extract-image-url",
+      "name": "提取图片URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3330, 500]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData"
+      },
+      "id": "aggregate-images",
+      "name": "汇总图片",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [3550, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成话题标签\nconst d = $('解析配图描述').item.json;\nconst images = $input.first().json.data || [];\n\n// 生成话题标签（公众号专用）\nconst baseTags = [\n  ...d.material.keywords,\n  ...d.products.flatMap(p => p.tags),\n  ...d.material.mbtiTags\n].filter((v, i, a) => a.indexOf(v) === i);\n\n// 添加公众号常用标签\nconst wechatTags = [\n  'MBTI', '人格心理学', '自我认知', '心理学知识',\n  '职场成长', '生活方式', '深度好文'\n];\n\nconst allTags = [...baseTags, ...wechatTags]\n  .filter((v, i, a) => a.indexOf(v) === i)\n  .slice(0, 10);\n\nreturn [{\n  json: {\n    contentId: `WX-${Date.now()}`,\n    title: d.generatedTitle,\n    platform: '微信公众号',\n    content: d.generatedContent,\n    tags: allTags,\n    images: images,\n    materialId: d.material.id,\n    productIds: d.products.map(p => p.id),\n    generationMethod: 'AI生成',\n    aiModel: process.env.AI_MODEL || 'claude-3-5-sonnet-20241022',\n    contentStrategy: '深度解析',\n    wordCount: d.generatedContent.length,\n    imageCount: images.length,\n    status: '待审核',\n    createdAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "merge-content",
+      "name": "整合内容数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3770, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 构建Notion请求\nconst d = $json;\nconst body = {\n  parent: { database_id: process.env.NOTION_CONTENT_DB_ID },\n  properties: {\n    '内容ID': { rich_text: [{ text: { content: d.contentId } }] },\n    '标题': { title: [{ text: { content: d.title.substring(0, 100) } }] },\n    '平台': { select: { name: d.platform } },\n    '完整正文': { rich_text: [{ text: { content: d.content.substring(0, 2000) } }] },\n    '话题标签': { multi_select: d.tags.map(t => ({ name: t })) },\n    '配图建议': { rich_text: [{ text: { content: JSON.stringify(d.images, null, 2).substring(0, 2000) } }] },\n    '关联素材ID': { rich_text: [{ text: { content: d.materialId } }] },\n    '关联产品ID': { rich_text: [{ text: { content: d.productIds.join(',') } }] },\n    '生成方式': { select: { name: d.generationMethod } },\n    'AI模型': { rich_text: [{ text: { content: d.aiModel } }] },\n    '内容策略': { select: { name: d.contentStrategy } },\n    '字数统计': { number: d.wordCount },\n    '状态': { select: { name: d.status } }\n  }\n};\nreturn [{ json: { notionBody: JSON.stringify(body), originalData: d } }];"
+      },
+      "id": "build-notion-request",
+      "name": "构建Notion请求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3990, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.notionBody }}",
+        "options": {}
+      },
+      "id": "write-to-notion",
+      "name": "写入内容库",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4210, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成执行摘要\nconst d = $('构建Notion请求').item.json.originalData;\nconst notionResult = $json;\n\nconst success = !!notionResult.id;\n\nconst summary = `公众号内容创作报告\n==================\n执行时间: ${new Date().toLocaleString('zh-CN')}\n\n【创作结果】\n状态: ${success ? '✅ 成功' : '❌ 失败'}\n\n【内容信息】\n- 标题: ${d.title}\n- 字数: ${d.wordCount}字\n- 配图: ${d.imageCount}张\n- 话题标签: ${d.tags.join('、')}\n\n【素材来源】\n- 素材ID: ${d.materialId}\n- 产品: ${d.productIds.join('、')}\n\n【AI信息】\n- 模型: ${d.aiModel}\n- 策略: ${d.contentStrategy}\n\n【下一步】\n1. 在Notion内容库中审核内容\n2. 检查标题、正文、配图是否符合公众号风格\n3. 修改优化后标记为"已审核"\n4. 使用"公众号-发布"工作流发布内容`;\n\nreturn [{\n  json: {\n    report: summary,\n    success,\n    contentId: d.contentId,\n    notionPageId: notionResult.id || '',\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "generate-summary",
+      "name": "生成执行摘要",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4430, 500]
+    }
+  ],
+  "connections": {
+    "周二四10点执行": {"main": [[{"node": "查询素材库", "type": "main", "index": 0}]]},
+    "手动触发": {"main": [[{"node": "查询素材库", "type": "main", "index": 0}]]},
+    "查询素材库": {"main": [[{"node": "查询产品库", "type": "main", "index": 0}]]},
+    "查询产品库": {"main": [[{"node": "智能选择数据", "type": "main", "index": 0}]]},
+    "智能选择数据": {"main": [[{"node": "生成标题Prompt", "type": "main", "index": 0}]]},
+    "生成标题Prompt": {"main": [[{"node": "AI生成标题", "type": "main", "index": 0}]]},
+    "AI生成标题": {"main": [[{"node": "提取标题", "type": "main", "index": 0}]]},
+    "提取标题": {"main": [[{"node": "生成正文Prompt", "type": "main", "index": 0}]]},
+    "生成正文Prompt": {"main": [[{"node": "AI生成正文", "type": "main", "index": 0}]]},
+    "AI生成正文": {"main": [[{"node": "提取正文", "type": "main", "index": 0}]]},
+    "提取正文": {"main": [[{"node": "生成配图Prompt", "type": "main", "index": 0}]]},
+    "生成配图Prompt": {"main": [[{"node": "AI生成配图描述", "type": "main", "index": 0}]]},
+    "AI生成配图描述": {"main": [[{"node": "解析配图描述", "type": "main", "index": 0}]]},
+    "解析配图描述": {"main": [[{"node": "准备图片生成", "type": "main", "index": 0}]]},
+    "准备图片生成": {"main": [[{"node": "Nano Banana生成图片", "type": "main", "index": 0}]]},
+    "Nano Banana生成图片": {"main": [[{"node": "提取图片URL", "type": "main", "index": 0}]]},
+    "提取图片URL": {"main": [[{"node": "汇总图片", "type": "main", "index": 0}]]},
+    "汇总图片": {"main": [[{"node": "整合内容数据", "type": "main", "index": 0}]]},
+    "整合内容数据": {"main": [[{"node": "构建Notion请求", "type": "main", "index": 0}]]},
+    "构建Notion请求": {"main": [[{"node": "写入内容库", "type": "main", "index": 0}]]},
+    "写入内容库": {"main": [[{"node": "生成执行摘要", "type": "main", "index": 0}]]}
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

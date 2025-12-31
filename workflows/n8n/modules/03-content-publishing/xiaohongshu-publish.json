@@ -1,0 +1,125 @@
+{
+  "name": "小红书-发布",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/{{$env.NOTION_CONTENT_DB_ID}}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"and\": [\n      {\"property\": \"平台\", \"select\": {\"equals\": \"小红书\"}},\n      {\"property\": \"状态\", \"select\": {\"equals\": \"已审核\"}}\n    ]\n  },\n  \"sorts\": [{\"property\": \"创建时间\", \"direction\": \"descending\"}],\n  \"page_size\": 1\n}",
+        "options": {}
+      },
+      "id": "query-content",
+      "name": "查询待发布内容",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取内容数据\nconst results = $json.results || [];\n\nif (results.length === 0) {\n  throw new Error('没有待发布的小红书内容（状态需为"已审核"）');\n}\n\nconst page = results[0];\nconst props = page.properties;\n\nconst content = {\n  notionPageId: page.id,\n  contentId: props['内容ID']?.rich_text?.[0]?.text?.content || '',\n  title: props['标题']?.title?.[0]?.text?.content || '',\n  content: props['完整正文']?.rich_text?.[0]?.text?.content || '',\n  tags: props['话题标签']?.multi_select?.map(t => t.name) || [],\n  imagesJson: props['配图建议']?.rich_text?.[0]?.text?.content || '[]'\n};\n\n// 解析图片\ntry {\n  content.images = JSON.parse(content.imagesJson);\n} catch (e) {\n  content.images = [];\n}\n\nreturn [{ json: content }];"
+      },
+      "id": "extract-content",
+      "name": "提取内容数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 格式化小红书发布内容\nconst d = $json;\n\n// 小红书正文格式化\nlet formattedContent = d.content;\n\n// 添加话题标签（小红书格式）\nconst tagsText = d.tags.map(t => `#${t}`).join(' ');\nformattedContent += `\\n\\n${tagsText}`;\n\n// 生成发布说明\nconst publishGuide = `【小红书发布指南】\n\n1. 复制以下标题和正文\n2. 登录小红书APP或网页版\n3. 点击"发布笔记"\n4. 粘贴标题和正文\n5. 上传配图（共${d.images.length}张）\n6. 添加话题标签\n7. 选择合适的发布时间\n8. 点击"发布"\n\n发布后请记录：\n- 笔记链接\n- 笔记ID\n- 发布时间`;\n\nreturn [{\n  json: {\n    ...d,\n    formattedContent,\n    publishGuide,\n    imageUrls: d.images.map(img => img.url).filter(url => url),\n    imageCount: d.images.length\n  }\n}];"
+      },
+      "id": "format-content",
+      "name": "格式化发布内容",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成发布提示\nconst d = $json;\n\nconst message = `===========================================\n小红书内容已准备就绪！\n===========================================\n\n【标题】\n${d.title}\n\n【正文】\n${d.formattedContent}\n\n【配图】\n共${d.imageCount}张图片\n${d.imageUrls.map((url, i) => `图${i+1}: ${url}`).join('\\n')}\n\n${d.publishGuide}\n\n===========================================`;\n\nconsole.log(message);\n\nreturn [{\n  json: {\n    ...d,\n    publishMessage: message,\n    status: '待人工发布'\n  }\n}];"
+      },
+      "id": "generate-publish-prompt",
+      "name": "生成发布提示",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 构建Notion更新请求（更新状态为"待发布"）\nconst d = $json;\n\nconst body = {\n  properties: {\n    '状态': { select: { name: '待发布' } },\n    '发布准备时间': { date: { start: new Date().toISOString() } }\n  }\n};\n\nreturn [{\n  json: {\n    ...d,\n    notionUpdateBody: JSON.stringify(body)\n  }\n}];"
+      },
+      "id": "build-notion-update",
+      "name": "构建Notion更新",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 500]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{$json.notionPageId}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.notionUpdateBody }}",
+        "options": {}
+      },
+      "id": "update-notion-status",
+      "name": "更新Notion状态",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成执行摘要\nconst d = $('构建Notion更新').item.json;\n\nconst summary = `小红书发布准备报告\n===================\n执行时间: ${new Date().toLocaleString('zh-CN')}\n\n【内容信息】\n- 内容ID: ${d.contentId}\n- 标题: ${d.title}\n- 字数: ${d.content.length}字\n- 配图: ${d.imageCount}张\n- 话题标签: ${d.tags.join('、')}\n\n【发布内容】\n${d.publishMessage}\n\n【下一步】\n1. 按照发布指南手动发布到小红书\n2. 发布后记录笔记链接和ID\n3. 在Notion中更新发布状态为"已发布"\n4. 填写发布链接和笔记ID\n\n【提示】\n- 建议发布时间：工作日19:00-21:00，周末10:00-12:00\n- 发布后及时回复评论，提高互动率\n- 监测数据表现，优化后续内容`;\n\nreturn [{\n  json: {\n    report: summary,\n    contentId: d.contentId,\n    title: d.title,\n    status: d.status,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "generate-summary",
+      "name": "生成执行摘要",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 500]
+    }
+  ],
+  "connections": {
+    "手动触发": {"main": [[{"node": "查询待发布内容", "type": "main", "index": 0}]]},
+    "查询待发布内容": {"main": [[{"node": "提取内容数据", "type": "main", "index": 0}]]},
+    "提取内容数据": {"main": [[{"node": "格式化发布内容", "type": "main", "index": 0}]]},
+    "格式化发布内容": {"main": [[{"node": "生成发布提示", "type": "main", "index": 0}]]},
+    "生成发布提示": {"main": [[{"node": "构建Notion更新", "type": "main", "index": 0}]]},
+    "构建Notion更新": {"main": [[{"node": "更新Notion状态", "type": "main", "index": 0}]]},
+    "更新Notion状态": {"main": [[{"node": "生成执行摘要", "type": "main", "index": 0}]]}
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "小红书发布工作流 - 从Notion读取已审核内容，格式化后提供发布指南，需人工完成实际发布操作"
+  }
+}
