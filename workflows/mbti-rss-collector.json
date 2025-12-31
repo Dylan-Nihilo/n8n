@@ -1,0 +1,124 @@
+{
+  "name": "MBTI素材采集器",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "hours", "hoursInterval": 12}]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "定时触发",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:1200/zhihu/hot"
+      },
+      "id": "fetch-rss",
+      "name": "获取知乎热榜RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.1,
+      "position": [250, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 处理RSS数据\nvar items = $input.all();\nvar results = [];\nvar mbtiKeywords = ['mbti', 'infj', 'infp', 'intj', 'intp', 'enfj', 'enfp', 'entj', 'entp', '性格', '内向', '外向', '社恐', '社交', '心理', 'i人', 'e人', '人格', '测试', '年轻人', '消费', '生活'];\n\nfor (var i = 0; i < Math.min(5, items.length); i++) {\n  var item = items[i].json;\n  var title = item.title || '';\n  var link = item.link || '';\n  var content = item.contentSnippet || item.content || title;\n  \n  var titleLower = title.toLowerCase();\n  var isRelevant = false;\n  for (var k = 0; k < mbtiKeywords.length; k++) {\n    if (titleLower.indexOf(mbtiKeywords[k]) !== -1) {\n      isRelevant = true;\n      break;\n    }\n  }\n  \n  results.push({\n    json: {\n      index: i,\n      title: title,\n      link: link,\n      content: content.substring(0, 500),\n      source: '知乎热榜',\n      score: isRelevant ? 8 : 5,\n      upvotes: 10 - i,\n      isRelevant: isRelevant,\n      created: new Date().toISOString()\n    }\n  });\n}\nreturn results;"
+      },
+      "id": "process-data",
+      "name": "处理数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 构建Notion请求体\nvar d = $json;\nvar body = {\n  parent: { database_id: '2d87fa67-a9af-81b9-9b07-cde5013942b4' },\n  properties: {\n    '标题': { title: [{ text: { content: d.title || '无标题' } }] },\n    '来源': { select: { name: d.source || '热榜' } },\n    '原文链接': { url: d.link || 'https://example.com' },\n    '原文摘要': { rich_text: [{ text: { content: (d.content || '').substring(0, 500) } }] },\n    '热度评分': { number: d.score || 5 },\n    '契合度': { number: d.score || 5 },\n    '创作角度': { rich_text: [{ text: { content: '' } }] },\n    '使用次数': { number: 0 },\n    '状态': { select: { name: '待评估' } }\n  }\n};\nreturn [{ json: { notionBody: JSON.stringify(body), originalData: d } }];"
+      },
+      "id": "build-notion-body",
+      "name": "构建Notion请求",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer {{$env.NOTION_API_TOKEN}}"},
+            {"name": "Notion-Version", "value": "2022-06-28"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.notionBody }}",
+        "options": {}
+      },
+      "id": "write-notion",
+      "name": "写入Notion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 100]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData"
+      },
+      "id": "aggregate-results",
+      "name": "汇总结果",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [1350, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成推荐报告\nvar allItems = $input.first().json.data || [];\nvar summary = '## MBTI素材采集报告\\n\\n';\nsummary += '共采集 ' + allItems.length + ' 条内容\\n\\n';\n\n// 分离相关和不相关内容\nvar relevant = [];\nvar other = [];\nfor (var i = 0; i < allItems.length; i++) {\n  var item = allItems[i].originalData;\n  if (item && item.isRelevant) {\n    relevant.push(item);\n  } else if (item) {\n    other.push(item);\n  }\n}\n\nif (relevant.length > 0) {\n  summary += '### MBTI相关内容 (' + relevant.length + '条)\\n\\n';\n  for (var i = 0; i < relevant.length; i++) {\n    var item = relevant[i];\n    summary += (i + 1) + '. **' + item.title + '**\\n';\n    if (item.link) summary += '   链接: ' + item.link + '\\n';\n    summary += '\\n';\n  }\n}\n\nif (other.length > 0) {\n  summary += '### 其他热门内容 (' + other.length + '条)\\n\\n';\n  for (var i = 0; i < Math.min(3, other.length); i++) {\n    var item = other[i];\n    summary += (i + 1) + '. ' + item.title + '\\n';\n  }\n}\n\nsummary += '\\n### 创作建议\\n';\nsummary += '- MBTI相关内容可直接改编\\n';\nsummary += '- 热门话题可结合MBTI角度创作\\n';\n\nreturn [{ json: { report: summary, relevantCount: relevant.length, totalCount: allItems.length } }];"
+      },
+      "id": "generate-recommendation",
+      "name": "生成推荐",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 100]
+    }
+  ],
+  "connections": {
+    "定时触发": {
+      "main": [[{"node": "获取知乎热榜RSS", "type": "main", "index": 0}]]
+    },
+    "手动触发": {
+      "main": [[{"node": "获取知乎热榜RSS", "type": "main", "index": 0}]]
+    },
+    "获取知乎热榜RSS": {
+      "main": [[{"node": "处理数据", "type": "main", "index": 0}]]
+    },
+    "处理数据": {
+      "main": [[{"node": "构建Notion请求", "type": "main", "index": 0}]]
+    },
+    "构建Notion请求": {
+      "main": [[{"node": "写入Notion", "type": "main", "index": 0}]]
+    },
+    "写入Notion": {
+      "main": [[{"node": "汇总结果", "type": "main", "index": 0}]]
+    },
+    "汇总结果": {
+      "main": [[{"node": "生成推荐", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
